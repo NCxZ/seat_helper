@@ -1,11 +1,39 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
+    <meta charset="UTF-8">
     <title>TCDD Bilet Gönderici</title>
+    <style>
+        .swap-btn {
+            cursor: pointer;
+            font-size: 18px;
+            margin: 1px;
+            display: inline-block;
+        }
+    </style>
 </head>
 <body>
     <h1>Bilet Gönderici</h1>
-    <button id="send-request">POST İsteğini Gönder</button>
+    
+    <form id="ticket-form">
+        <label for="departure">Kalkış İstasyonu:</label>
+        <input type="text" id="departure" name="departure" value="Eskişehir" required><br>
+        
+		<!-- İstasyonları değiştir butonu -->
+		<span class="swap-btn" id="swap-locations">↑↓</span><br>
+		
+        <label for="arrival">Varış İstasyonu:</label>
+        <input type="text" id="arrival" name="arrival" value="İstanbul(Söğütlüçeşme)" required><br><br>
+        
+        <label for="date">Tarih:</label>
+        <input type="date" id="date" name="date" required><br><br>
+        
+        <label for="time">Sefer Saati:</label>
+        <input type="time" id="time" name="time" value="12:00" required><br><br>
+
+        <button type="button" id="set-request">Kur</button>
+    </form>
+    
     <div id="response" style="margin-top: 20px; color: green;"></div>
 
     <script src="popup.js"></script>

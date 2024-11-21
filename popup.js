@@ -1,38 +1,92 @@
-document.getElementById("send-request").addEventListener("click", async () => {
+// Popup açıldığında saklanan değerleri geri yükle
+document.addEventListener("DOMContentLoaded", () => {
+    chrome.storage.local.get(["departure", "arrival", "date", "time"], (data) => {
+        if (data.departure) document.getElementById("departure").value = data.departure;
+        if (data.arrival) document.getElementById("arrival").value = data.arrival;
+        if (data.date) document.getElementById("date").value = data.date;
+        if (data.time) document.getElementById("time").value = data.time;
+    });
+});
+
+// Değerleri saklama
+const saveFormValues = () => {
+    const departure = document.getElementById("departure").value;
+    const arrival = document.getElementById("arrival").value;
+    const date = document.getElementById("date").value;
+    const time = document.getElementById("time").value;
+
+    chrome.storage.local.set({ departure, arrival, date, time }, () => {
+        console.log("Değerler saklandı:", { departure, arrival, date, time });
+    });
+};
+
+// Değerleri saklama işlemi her input değiştiğinde tetiklenir
+document.getElementById("departure").addEventListener("input", saveFormValues);
+document.getElementById("arrival").addEventListener("input", saveFormValues);
+document.getElementById("date").addEventListener("input", saveFormValues);
+document.getElementById("time").addEventListener("input", saveFormValues);
+
+// "Kur" düğmesine basıldığında işlemler
+document.getElementById("set-request").addEventListener("click", () => {
     const responseElement = document.getElementById("response");
 
-    // POST isteği için veri ve URL
-    const postData = {
-        "javax.faces.partial.ajax": "true",
-        "javax.faces.source": "trCalGid",
-        "javax.faces.partial.execute": "trCalGid trCalDon",
-        "javax.faces.partial.render": "trCalDon trCalGid",
-        "javax.faces.behavior.event": "dateSelect",
-        "javax.faces.partial.event": "dateSelect",
-        "biletAramaForm": "biletAramaForm",
-        "tipradioIslemTipi": "0",
-        "nereden": "İstanbul(Söğütlüçeşme)",
-        "trCalGid_input": "16.11.2024",
-        "tipradioSeyehatTuru": "1",
-        "nereye": "Eskişehir",
-        "syolcuSayisi_input": "1",
-        "javax.faces.ViewState": ""
-    };
+    // Form değerlerini al
+    const departure = document.getElementById("departure").value;
+    const arrival = document.getElementById("arrival").value;
+    const dateInput = document.getElementById("date").value;
+    const time = document.getElementById("time").value;
 
-    const url = "https://ebilet.tcddtasimacilik.gov.tr/view/eybis/tnmGenel/tcddWebContent.jsf";
+    // Tarih formatını dönüştür (YYYY-MM-DD → DD.MM.YYYY)
+    const [year, month, day] = dateInput.split("-");
+    const formattedDate = `${day}.${month}.${year}`;
 
-    try {
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: new URLSearchParams(postData).toString()
-        });
-
-        const responseText = await response.text();
-        responseElement.textContent = "Yanıt Alındı: " + responseText.slice(0, 100) + "..."; // Yanıtın ilk 100 karakteri
-    } catch (error) {
-        responseElement.textContent = "Hata: " + error.message;
+    // Zorunlu alanların kontrolü
+    if (!departure || !arrival || !dateInput || !time) {
+        responseElement.textContent = "Lütfen tüm alanları doldurun.";
+        return;
     }
+
+    responseElement.textContent = "Form dolduruluyor ve arama yapılıyor...";
+
+    // Aktif sekmede form doldurma ve gönderme işlemi
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) {
+            responseElement.textContent = "TCDD sitesi açık bir sekmede bulunamadı.";
+            return;
+        }
+
+        const activeTabId = tabs[0].id;
+
+        chrome.scripting.executeScript(
+            {
+                target: { tabId: activeTabId },
+                func: (departure, arrival, formattedDate) => {
+                    // Form alanlarını doldur
+                    document.getElementById("nereden").value = departure;
+                    document.getElementById("nereye").value = arrival;
+                    document.getElementById("trCalGid_input").value = formattedDate;
+
+                    // Bilet arama formunu gönder
+                    document.getElementById("btnSeferSorgula").click();
+                },
+                args: [departure, arrival, formattedDate],
+            },
+            () => {
+                responseElement.textContent = "İşlem tamamlandı, sonuçlar yükleniyor...";
+            }
+        );
+    });
+});
+
+// "İstasyonları Değiştir" düğmesine basıldığında çalışacak işlem
+document.getElementById("swap-locations").addEventListener("click", () => {
+    const departureInput = document.getElementById("departure");
+    const arrivalInput = document.getElementById("arrival");
+
+    // Kalkış ve varış istasyonlarını değiştir
+    const temp = departureInput.value;
+    departureInput.value = arrivalInput.value;
+    arrivalInput.value = temp;
+
+    saveFormValues(); // Değişiklikleri kaydet
 });
