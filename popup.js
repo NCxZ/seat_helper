@@ -26,7 +26,6 @@ document.getElementById("arrival").addEventListener("input", saveFormValues);
 document.getElementById("date").addEventListener("input", saveFormValues);
 document.getElementById("time").addEventListener("input", saveFormValues);
 
-// "Kur" düğmesine basıldığında işlemler
 document.getElementById("set-request").addEventListener("click", () => {
     const responseElement = document.getElementById("response");
 
@@ -57,6 +56,7 @@ document.getElementById("set-request").addEventListener("click", () => {
 
         const activeTabId = tabs[0].id;
 
+        // 1. Adım: Form Doldurma ve Gönderme
         chrome.scripting.executeScript(
             {
                 target: { tabId: activeTabId },
@@ -72,13 +72,83 @@ document.getElementById("set-request").addEventListener("click", () => {
                 args: [departure, arrival, formattedDate],
             },
             () => {
-                responseElement.textContent = "İşlem tamamlandı, sonuçlar yükleniyor...";
+                responseElement.textContent = "Sayfaya yönlendiriliyor...";
+
+                // 2. Adım: Sayfa Yüklenmesini Bekleme ve Sefer Seçimi
+                chrome.tabs.onUpdated.addListener(function onUpdated(tabId, changeInfo) {
+                    if (tabId === activeTabId && changeInfo.status === "complete") {
+                        // Sayfa tam olarak yüklendi
+                        console.log("Sayfa tamamen yüklendi, uygun sefer aranıyor...");
+
+                        // Sefer seçme fonksiyonu
+                        chrome.scripting.executeScript(
+                            {
+                                target: { tabId: activeTabId },
+                                func: (time) => {
+                                    // Sayfa tamamen yüklendikten sonra işlemi başlat
+                                    function waitForTableLoad(callback) {
+                                        const observer = new MutationObserver(() => {
+                                            // Tabloyu bekleyerek doğru satırı bul
+                                            const rows = document.querySelectorAll("tbody#mainTabView\\:gidisSeferTablosu_data tr");
+                                            if (rows.length > 0) {
+                                                observer.disconnect();
+                                                callback(); // Sayfa yüklendi, işlemi başlat
+                                            }
+                                        });
+
+                                        observer.observe(document.body, { childList: true, subtree: true });
+                                    }
+
+                                    waitForTableLoad(() => {
+                                        console.log("Sefer tablosu yüklendi, uygun sefer aranıyor...");
+
+                                        // Sefer seçme fonksiyonu
+                                        function selectMatchingSefer(time) {
+                                            const rows = document.querySelectorAll("tbody#mainTabView\\:gidisSeferTablosu_data tr");
+                                            for (const row of rows) {
+                                                const seferSaatElement = row.querySelector("span.seferSorguTableBuyuk");
+                                                if (!seferSaatElement) continue;
+
+                                                const seferSaat = seferSaatElement.textContent.trim();
+                                                console.log(`Kontrol edilen sefer saati: ${seferSaat}`);
+
+                                                if (seferSaat === time) {
+                                                    // "Seç" butonunu bulmak için doğru div'i seçiyoruz
+                                                    const selectButton = row.querySelector("div.seferSecButton");
+                                                    if (selectButton) {
+                                                        selectButton.click();  // Butona tıkla
+                                                        console.log(`Sefer ${seferSaat} seçildi.`);
+                                                        return true; // Sefer seçildi
+                                                    } else {
+                                                        console.log(`Sefer ${seferSaat} seçilemedi: Buton bulunamadı.`);
+                                                    }
+                                                }
+                                            }
+                                            console.log("Uygun bir sefer bulunamadı.");
+                                            return false; // Sefer seçilemedi
+                                        }
+
+                                        selectMatchingSefer(time);
+                                    });
+                                },
+                                args: [time],
+                            },
+                            (results) => {
+                                // Sefer seçme sonucuna göre mesaj göster
+                                const wasSelected = results[0]?.result;
+                                if (wasSelected) {
+                                    responseElement.textContent = "Uygun sefer seçildi.";
+                                } else {
+                                    responseElement.textContent = "Uygun bir sefer bulunamadı.";
+                                }
+                            }
+                        );
+                    }
+                });
             }
         );
     });
 });
-
-// "İstasyonları Değiştir" düğmesine basıldığında çalışacak işlem
 document.getElementById("swap-locations").addEventListener("click", () => {
     const departureInput = document.getElementById("departure");
     const arrivalInput = document.getElementById("arrival");
