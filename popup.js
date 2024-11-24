@@ -25,11 +25,17 @@ const postRequest = async (url, body) => {
     }
 };
 
+const getStationId = (stationName) => {
+	if (stationName === "Eskişehir") return 234516254;
+	if (stationName === "İsTanbul(Söğütlüçeşme)") return 15917435912;
+};
+
 document.addEventListener("DOMContentLoaded", async () => {
-    chrome.storage.local.get(["date", "time"], (data) => {
+    chrome.storage.local.get(["date", "time", "gender"], (data) => {
         
         if (data.date) document.getElementById("date").value = data.date;
         if (data.time) document.getElementById("time").value = data.time;
+		if (data.gender) document.getElementById("gender").value = data.gender;
     });
 
     // API çağrısı için gerekli URL ve body
@@ -51,17 +57,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     // İstasyonlar verisi alındıktan sonra dropdown'ları güncelle
     if (stationsData) {
         Object.keys(stationsData).forEach(stationName => {
-            const option = new Option(stationName, stationsData[stationName]); // Burası düzeltilecek
+            const option = new Option(stationName, stationName); // Burası düzeltilecekstationsData[stationName]
             departure.options.add(option);
             arrival.options.add(option.cloneNode(true));
         });
     }
 
     // Varsayılan değerler
-	chrome.storage.local.get(["departure", "arrival"], (data) => {
+	chrome.storage.local.get(["departure", "arrival", "date"], (data) => {
         
         if (data.departure) document.getElementById("departure").value = data.departure;
     if (data.arrival) document.getElementById("arrival").value = data.arrival;
+	fetchAndPopulateTimes(data.departure,data.arrival,data.date);
+	
     });
 	
 });
@@ -98,23 +106,111 @@ const fetchStationsData = async (stationUrl, stationbody) => {
 };
 
 
-// Değerleri saklama
+// Sefer saatlerini al ve dropdown’a ekle
+const fetchAndPopulateTimes = async (departure, arrival, date) => {
+    const seferUrl = "https://api-yebsp.tcddtasimacilik.gov.tr/sefer/seferSorgula";
+	const departureId = getStationId(departure);
+	const arrivalId = getStationId(arrival);
+    const [year, month, day] = date.split("-");
+    const formattedDate = `${day}.${month}.${year}`;
+    date = new Date(`${year}-${month}-${day}`);
+    const apiFormattedDate = `${date.toLocaleString("en-US", { month: "short" })} ${date.getDate()}, ${date.getFullYear()} ${date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true })}`;
+
+    const seferBody = {
+        kanalKodu: 3,
+        dil: 0,
+        seferSorgulamaKriterWSDVO: {
+            satisKanali: 3,
+            binisIstasyonu: departure,
+            inisIstasyonu: arrival,
+            binisIstasyonId: departureId, // İstasyon ID'leri burada güncellenecek
+            inisIstasyonId: arrivalId, // İstasyon ID'leri burada güncellenecek
+            binisIstasyonu_isHaritaGosterimi: "False",
+            inisIstasyonu_isHaritaGosterimi: "False",
+            seyahatTuru: 1,
+            gidisTarih: `${apiFormattedDate} 00:00:00 AM`,
+            bolgeselGelsin: "False",
+            islemTipi: 0,
+            yolcuSayisi: 1,
+            aktarmalarGelsin: "True",
+        },
+    };
+
+    try {
+        const seferResponse = await postRequest(seferUrl, seferBody);
+
+        if (
+            seferResponse &&
+            seferResponse.cevapBilgileri &&
+            seferResponse.cevapBilgileri.cevapKodu === "000" &&
+            seferResponse.seferSorgulamaSonucList
+        ) {
+            const timesDropdown = document.getElementById("time");
+            timesDropdown.innerHTML = ""; // Eski seçenekleri temizle
+
+            // Saatleri sıralama
+            const sortedSeferList = seferResponse.seferSorgulamaSonucList.sort((a, b) => {
+                return new Date(a.binisTarih) - new Date(b.binisTarih);
+            });
+
+            // Sıralı saatleri dropdown'a ekleme
+            sortedSeferList.forEach((sefer) => {
+                const timeOption = new Option(
+                    new Date(sefer.binisTarih).toLocaleTimeString("tr-TR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    }),
+                    new Date(sefer.binisTarih).toLocaleTimeString("tr-TR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    })
+                );
+                timesDropdown.options.add(timeOption);
+            });
+
+            console.log("Sıralı sefer saatleri dropdown’a eklendi.");
+        } else {
+            console.error("Sefer saatleri alınamadı veya API yanıtı beklenmeyen formatta.");
+        }
+    } catch (error) {
+        console.error("Sefer saatleri sorgulanırken hata oluştu:", error);
+    }
+};
+
+
+// Kalkış, varış ve tarih seçildiğinde sefer saatlerini getir
+const saveFormValuesAndFetchTimes = async () => {
+    const departure = document.getElementById("departure").value;
+    const arrival = document.getElementById("arrival").value;
+    const date = document.getElementById("date").value;
+
+    chrome.storage.local.set({ departure, arrival, date }, async () => {
+        console.log("Değerler saklandı:", { departure, arrival, date });
+
+        if (departure && arrival && date) {
+            console.log("Sefer sorgulama başlatılıyor...");
+            await fetchAndPopulateTimes(departure, arrival, date);
+        }
+    });
+};
+
 const saveFormValues = () => {
     const departure = document.getElementById("departure").value;
     const arrival = document.getElementById("arrival").value;
     const date = document.getElementById("date").value;
     const time = document.getElementById("time").value;
+	const gender = document.getElementById("gender").value;
 
-    chrome.storage.local.set({ departure, arrival, date, time }, () => {
-        console.log("Değerler saklandı:", { departure, arrival, date, time });
+    chrome.storage.local.set({ departure, arrival, date, time, gender }, () => {
+        console.log("Değerler saklandı:", { departure, arrival, date, time, gender });
     });
 };
 
-// Değerleri saklama işlemi her input değiştiğinde tetiklenir
-document.getElementById("departure").addEventListener("input", saveFormValues);
-document.getElementById("arrival").addEventListener("input", saveFormValues);
-document.getElementById("date").addEventListener("input", saveFormValues);
-document.getElementById("time").addEventListener("input", saveFormValues);
+// Form değerlerini kaydet ve sefer sorgula
+document.getElementById("departure").addEventListener("change", saveFormValuesAndFetchTimes);
+document.getElementById("arrival").addEventListener("change", saveFormValuesAndFetchTimes);
+document.getElementById("date").addEventListener("change", saveFormValuesAndFetchTimes);
+document.getElementById("gender").addEventListener("input", saveFormValues);
 
 // executeScript işlemini Promise olarak saran fonksiyon
 const executeScriptPromise = (tabId, func, args = []) => {
@@ -138,7 +234,10 @@ const executeScriptPromise = (tabId, func, args = []) => {
 
 
 // Koltuk kontrol fonksiyonu
-const checkSeatsLoop = async (seferUrl, vagonUrl, departure, departureId, arrival, arrivalId, formattedDate, time) => {
+const checkSeatsLoop = async (seferUrl, vagonUrl, departure, arrival, formattedDate, time) => {
+	const departureId = getStationId(departure);
+	const arrivalId = getStationId(arrival);
+	
     while (true) {
         console.log("Koltuk uygunluğu kontrol ediliyor...");
 
@@ -177,7 +276,6 @@ const checkSeatsLoop = async (seferUrl, vagonUrl, departure, departureId, arriva
 
         for (const sefer of seferResponse.seferSorgulamaSonucList || []) {
             const seferTime = new Date(sefer.binisTarih).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-
             if (seferTime === time) {
                 console.log(`Sefer bulundu: ${seferTime}`);
                 for (const vagon of sefer.vagonTipleriBosYerUcret) {
@@ -224,7 +322,7 @@ const checkSeatsLoop = async (seferUrl, vagonUrl, departure, departureId, arriva
 
 
 // TCDD sayfasında işlemleri başlatma
-const startTCDDProcess = async (tabId, departure, arrival, formattedDate, time, vagon, koltuk, responseElement) => {
+const startTCDDProcess = async (tabId, departure, arrival, formattedDate, time, vagon, koltuk, gender, responseElement) => {
     console.log("TCDD tabında işlemler başlatılıyor...");
 
     // 1. Sefer Sorgulama ve "Devam" Butonuna Tıklama
@@ -367,7 +465,7 @@ const startTCDDProcess = async (tabId, departure, arrival, formattedDate, time, 
 
     // 4. Cinsiyet Seçimi
     console.log("Cinsiyet seçimi kontrol ediliyor...");
-    await executeScriptPromise(tabId, () => {
+    await executeScriptPromise(tabId, (gender) => {
         function waitForCinsiyetScreen(callback) {
             const observer = new MutationObserver(() => {
                 const form = document.querySelector("form#cinsiyet_secimi_form");
@@ -382,10 +480,16 @@ const startTCDDProcess = async (tabId, departure, arrival, formattedDate, time, 
 
         return new Promise((resolve) => {
             waitForCinsiyetScreen(() => {
-                const maleButton = document.getElementById("j_idt548");
-                if (maleButton) {
+				console.log(gender);
+                const maleButton = document.getElementById("cinsiyet_secimi_form").children[1];
+				const femaleButton = document.getElementById("cinsiyet_secimi_form").children[2];
+                if (gender === "Erkek" && maleButton) { //gender === "Erkek" && maleButton
                     maleButton.click();
                     console.log("Cinsiyet olarak 'Bay' seçildi.");
+                    resolve(true);
+				} else if (gender === "Kadın" && femaleButton){
+					femaleButton.click();
+                    console.log("Cinsiyet olarak 'Bayan' seçildi.");
                     resolve(true);
                 } else {
                     console.error("Cinsiyet seçimi için 'Bay' butonu bulunamadı.");
@@ -393,7 +497,7 @@ const startTCDDProcess = async (tabId, departure, arrival, formattedDate, time, 
                 }
             });
         });
-    });
+    }, [gender]);
 
     responseElement.textContent = "Cinsiyet seçimi tamamlandı.";
 };
@@ -407,6 +511,7 @@ document.getElementById("set-request").addEventListener("click", async () => {
     const arrival = document.getElementById("arrival").value;
     const dateInput = document.getElementById("date").value;
     const time = document.getElementById("time").value;
+	const gender = document.getElementById("gender").value;
 
     const [year, month, day] = dateInput.split("-");
     const formattedDate = `${day}.${month}.${year}`;
@@ -417,17 +522,16 @@ document.getElementById("set-request").addEventListener("click", async () => {
     const vagonUrl = "https://api-yebsp.tcddtasimacilik.gov.tr/vagon/vagonHaritasindanYerSecimi";
 	
 	//Bu arada istasyon adı/istasyon id'si bilgilerini içeren dosya kullanılarak seçilmiş departure ve arrival için departureId ve arrivalId değerleri atanmalı.
-	const [departureId, arrivalId] = [234516254, 15917435912];
 
     try {
-        const { vagon, koltuk, seferId } = await checkSeatsLoop(seferUrl, vagonUrl, departure, departureId, arrival, arrivalId, apiFormattedDate, time);
+        const { vagon, koltuk, seferId } = await checkSeatsLoop(seferUrl, vagonUrl, departure, arrival, apiFormattedDate, time);
         responseElement.textContent = "Uygun koltuk bulundu. TCDD sayfasında işlemler başlatılıyor...";
 		const tabs = await new Promise((resolve, reject) =>
 			chrome.tabs.query({ active: true, currentWindow: true }, (tabs) =>
 				tabs.length ? resolve(tabs) : reject("TCDD sitesi açık bir sekmede bulunamadı.")
 				)
 			);
-        await startTCDDProcess(tabs[0].id, departure, arrival, formattedDate, time, vagon, koltuk, responseElement);
+        await startTCDDProcess(tabs[0].id, departure, arrival, formattedDate, time, vagon, koltuk, gender, responseElement);
     } catch (error) {
         responseElement.textContent = `Hata: ${error}`;
         console.error("Hata:", error);
@@ -443,7 +547,7 @@ document.getElementById("swap-locations").addEventListener("click", () => {
     departureInput.value = arrivalInput.value;
     arrivalInput.value = temp;
 
-    saveFormValues(); // Değişiklikleri kaydet
+    saveFormValuesAndFetchTimes(); // Değişiklikleri kaydet
 });
 
 
