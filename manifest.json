@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "TCDD Bilet Otomasyonu",
+  "name": "TCDD Bilet Tutucu",
   "version": "1.0",
-  "description": "TCDD'nin bilet alma işlemleri için POST isteklerini otomatik gönderir.",
+  "description": "TCDD'nin seçilen seferin koltuklarını kontrol eder ve bulduğu koltuğu açık olan bilet alma sayfasında seçer.",
   "permissions": [
     "activeTab",
     "scripting",

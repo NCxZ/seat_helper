@@ -203,10 +203,13 @@ const fetchAndPopulateTimes = async (departure, arrival, date) => {
 
 // Kalkış, varış ve tarih seçildiğinde sefer saatlerini getir
 const saveFormValuesAndFetchTimes = async () => {
+	const responseElement = document.getElementById("response");
     const departure = document.getElementById("departure").value;
     const arrival = document.getElementById("arrival").value;
     const date = document.getElementById("date").value;
-
+	
+	responseElement.textContent = "...";
+	
     chrome.storage.local.set({ departure, arrival, date }, async () => {
         console.log("Değerler saklandı:", { departure, arrival, date });
 
@@ -223,6 +226,9 @@ const saveFormValues = () => {
     const date = document.getElementById("date").value;
     const time = document.getElementById("time").value;
 	const gender = document.getElementById("gender").value;
+	
+	const responseElement = document.getElementById("response");
+	responseElement.textContent = "...";
 
     chrome.storage.local.set({ departure, arrival, date, time, gender }, () => {
         console.log("Değerler saklandı:", { departure, arrival, date, time, gender });
@@ -339,7 +345,7 @@ const checkSeatsLoop = async (seferUrl, vagonUrl, departure, arrival, formattedD
         }
 
         console.log("Uygun koltuk bulunamadı. Tekrar deneniyor...");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 10));
     }
 };
 
@@ -545,7 +551,8 @@ document.getElementById("set-request").addEventListener("click", async () => {
     const vagonUrl = "https://api-yebsp.tcddtasimacilik.gov.tr/vagon/vagonHaritasindanYerSecimi";
 	
 	//Bu arada istasyon adı/istasyon id'si bilgilerini içeren dosya kullanılarak seçilmiş departure ve arrival için departureId ve arrivalId değerleri atanmalı.
-
+	responseElement.textContent = "Koltuk arama başladı. Vagonlar taranıyor...";
+	
     try {
         const { vagon, koltuk, seferId } = await checkSeatsLoop(seferUrl, vagonUrl, departure, arrival, apiFormattedDate, time);
         responseElement.textContent = "Uygun koltuk bulundu. TCDD sayfasında işlemler başlatılıyor...";

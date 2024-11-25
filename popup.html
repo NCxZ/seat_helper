@@ -2,48 +2,42 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>TCDD Bilet Gönderici</title>
-    <style>
-        .swap-btn {
-            cursor: pointer;
-            font-size: 18px;
-            margin: 1px;
-            display: inline-block;
-        }
-    </style>
+    <title>TCDD Bilet Bul</title>
+    <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-    <h1>Bilet Gönderici</h1>
-    
+
     <form id="ticket-form">
-        <label for="departure">Kalkış İstasyonu:</label>
-        <select type="text" id="departure" name="departure" value="Eskişehir" required></select><br>
+        <h1>TCDD Bilet Bul</h1>
         
-		<!-- İstasyonları değiştir butonu -->
-		<span class="swap-btn" id="swap-locations">↑↓</span><br>
-		
+        <label for="departure">Kalkış İstasyonu:</label>
+        <select id="departure" name="departure" required></select>
+
+        <!-- İstasyonları değiştir butonu -->
+        <span class="swap-btn" id="swap-locations">↑↓</span>
+        
         <label for="arrival">Varış İstasyonu:</label>
-        <select type="text" id="arrival" name="arrival" value="İstanbul(Söğütlüçeşme)" required></select><br><br>
+        <select id="arrival" name="arrival" required></select>
         
         <label for="date">Tarih:</label>
-        <input type="date" id="date" name="date" required><br><br>
+        <input type="date" id="date" name="date" required>
         
         <label for="time">Sefer Saati:</label>
-		<select id="time">
-		<option value="">Sefer saatini seçin</option>
-		</select><br><br>
-		
-		<label for="gender">Cinsiyet:</label>
-        <select type="text" id="gender" name="gender" value="Erkek" required>
-		<option value="Erkek">Erkek</option>
-		<option value="Kadın">Kadın</option>
-		</select>
-		<br><br>
-
+        <select id="time" required>
+            <option value="">Sefer saatini seçin</option>
+        </select>
+        
+        <label for="gender">Cinsiyet:</label>
+        <select id="gender" name="gender" required>
+            <option value="Erkek">Erkek</option>
+            <option value="Kadın">Kadın</option>
+        </select>
+        
         <button type="button" id="set-request">Kur</button>
-    </form>
+		<div id="response"></div>
+	</form>
     
-    <div id="response" style="margin-top: 20px; color: green;"></div>
+    
 
     <script src="popup.js"></script>
 </body>
