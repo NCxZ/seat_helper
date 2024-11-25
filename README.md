@@ -2,5 +2,5 @@ TCDD den seçilen sefer için bilet uygunluğunu sürekli tarayarak, uygun koltu
 Kullanmak için Uzantıyı Chromium tabanlı tarayıcınızın Uzantılar sekmesine ekleyin.<br>
 https://ebilet.tcddtasimacilik.gov.tr/view/eybis/tnmGenel/tcddWebContent.jsf adresini bir sekmede açın.<br>
 Uzantı penceresini açıp almak istediğiniz koltuğa dair bilgileri girin.<br>
-Kur butonuna bastıktan sonra uygun koltuk olması durumunda açık sekme otomatik olarak koltuğu seçecek.<br>
+Kur butonuna bastıktan sonra uygun koltuk olması durumunda açık sekme otomatik olarak koltuğu seçecektir.<br>
 Sekmeye normal şekilde bilgilerinizi girerek satın alma işlemini tamamlayın.<br>
