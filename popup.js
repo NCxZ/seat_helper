@@ -1,3 +1,21 @@
+//import stations.json
+let stationsList = {}; // JSON verisini tutmak için değişken
+
+// JSON dosyasını oku ve değişkene ata
+const loadStations = async () => {
+    try {
+        const response = await fetch('./stations.json');
+        if (!response.ok) {
+            throw new Error(`Hata: ${response.status} - ${response.statusText}`);
+        }
+        stationsList = await response.json();
+        console.log('Stations data yüklendi:', stationsList);
+    } catch (error) {
+        console.error('Stations JSON dosyası yüklenirken hata oluştu:', error);
+    }
+};
+
+
 // API çağrısı yapmak için yardımcı fonksiyon
 const postRequest = async (url, body) => {
     const headers = {
@@ -26,15 +44,16 @@ const postRequest = async (url, body) => {
 };
 
 const getStationId = (stationName) => {
-	if (stationName === "Eskişehir") return 234516254;
-	if (stationName === "İsTanbul(Söğütlüçeşme)") return 15917435912;
+	if (stationsList[stationName]) return stationsList[stationName];
+	
 };
 
 document.addEventListener("DOMContentLoaded", async () => {
-    chrome.storage.local.get(["date", "time", "gender"], (data) => {
+	loadStations();
+    chrome.storage.local.get(["date", "gender"], (data) => {
         
         if (data.date) document.getElementById("date").value = data.date;
-        if (data.time) document.getElementById("time").value = data.time;
+        
 		if (data.gender) document.getElementById("gender").value = data.gender;
     });
 
@@ -64,11 +83,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     // Varsayılan değerler
-	chrome.storage.local.get(["departure", "arrival", "date"], (data) => {
+	chrome.storage.local.get(["departure", "arrival", "date","time"], (data) => {
         
         if (data.departure) document.getElementById("departure").value = data.departure;
     if (data.arrival) document.getElementById("arrival").value = data.arrival;
 	fetchAndPopulateTimes(data.departure,data.arrival,data.date);
+	if (data.time) document.getElementById("time").value = data.time;
 	
     });
 	
@@ -108,6 +128,7 @@ const fetchStationsData = async (stationUrl, stationbody) => {
 
 // Sefer saatlerini al ve dropdown’a ekle
 const fetchAndPopulateTimes = async (departure, arrival, date) => {
+	const responseElement = document.getElementById("response");
     const seferUrl = "https://api-yebsp.tcddtasimacilik.gov.tr/sefer/seferSorgula";
 	const departureId = getStationId(departure);
 	const arrivalId = getStationId(arrival);
@@ -169,8 +190,10 @@ const fetchAndPopulateTimes = async (departure, arrival, date) => {
             });
 
             console.log("Sıralı sefer saatleri dropdown’a eklendi.");
+			responseElement.textContent = "Sefer saatleri listelendi.";
         } else {
             console.error("Sefer saatleri alınamadı veya API yanıtı beklenmeyen formatta.");
+			responseElement.textContent = "Sefer saatleri alınamadı.";
         }
     } catch (error) {
         console.error("Sefer saatleri sorgulanırken hata oluştu:", error);
