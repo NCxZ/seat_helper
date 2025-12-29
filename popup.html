@@ -1,13 +1,62 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <title>TCDD Bilet Gönderici</title>
-</head>
-<body>
-    <h1>Bilet Gönderici</h1>
-    <button id="send-request">POST İsteğini Gönder</button>
-    <div id="response" style="margin-top: 20px; color: green;"></div>
+<html lang="tr">
 
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TCDD Bilet Botu</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="container">
+        <h3>TCDD Koltuk Takip</h3>
+
+        <div id="status-panel" class="status-box">
+            <span id="status-icon">⚪</span>
+            <span id="status-text">Yükleniyor...</span>
+        </div>
+
+        <div class="form-group">
+            <label>Nereden:</label>
+            <select id="departure"></select>
+        </div>
+
+        <div class="form-group">
+            <label>Nereye:</label>
+            <select id="arrival"></select>
+        </div>
+
+        <button id="swap-locations" class="secondary-btn">⇅ Değiştir</button>
+
+        <div class="form-group">
+            <label>Tarih:</label>
+            <input type="date" id="date">
+        </div>
+
+        <div class="form-group">
+            <label>Sefer Saati:</label>
+            <select id="time">
+                <option value="">Önce tarih seçin</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label>Cinsiyet:</label>
+            <select id="gender">
+                <option value="Erkek">Bay (Erkek)</option>
+                <option value="Kadın">Bayan (Kadın)</option>
+            </select>
+        </div>
+
+        <div class="actions">
+            <button id="btn-start" class="primary-btn">BAŞLAT</button>
+            <button id="btn-stop" class="danger-btn" style="display:none;">DURDUR</button>
+        </div>
+
+        <div id="message-log" class="log-box"></div>
+    </div>
     <script src="popup.js"></script>
 </body>
+
 </html>

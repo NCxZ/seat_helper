@@ -1,18 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "TCDD Bilet Otomasyonu",
+  "name": "TCDD Bilet Tutucu",
   "version": "1.0",
-  "description": "TCDD'nin bilet alma işlemleri için POST isteklerini otomatik gönderir.",
+  "description": "TCDD'nin seçilen seferin koltuklarını kontrol eder ve bulduğu koltuğu açık olan bilet alma sayfasında seçer.",
   "permissions": [
     "activeTab",
     "scripting",
-    "storage"
+    "storage",
+    "webRequest",
+    "notifications"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "host_permissions": [
-    "https://ebilet.tcddtasimacilik.gov.tr/*"
+    "https://ebilet.tcddtasimacilik.gov.tr/*",
+    "https://api-yebsp.tcddtasimacilik.gov.tr/*",
+    "https://cdn-api-prod-ytp.tcddtasimacilik.gov.tr/*",
+    "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/*"
   ],
   "action": {
     "default_popup": "popup.html",
