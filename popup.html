@@ -1,5 +1,46 @@
 <!DOCTYPE html>
 <html lang="tr">
+<<<<<<< HEAD
+=======
+<head>
+    <meta charset="UTF-8">
+    <title>TCDD Bilet Bul</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+    <form id="ticket-form">
+        <h1>TCDD Bilet Bul</h1>
+        
+        <label for="departure">Kalkış İstasyonu:</label>
+        <select id="departure" name="departure" required></select>
+
+        <!-- İstasyonları değiştir butonu -->
+        <span class="swap-btn" id="swap-locations">↑↓</span>
+        
+        <label for="arrival">Varış İstasyonu:</label>
+        <select id="arrival" name="arrival" required></select>
+        
+        <label for="date">Tarih:</label>
+        <input type="date" id="date" name="date" required>
+        
+        <label for="time">Sefer Saati:</label>
+        <select id="time" required>
+            <option value="">Sefer saatini seçin</option>
+        </select>
+        
+        <label for="gender">Cinsiyet:</label>
+        <select id="gender" name="gender" required>
+            <option value="Erkek">Erkek</option>
+            <option value="Kadın">Kadın</option>
+        </select>
+        
+        <button type="button" id="set-request">Kur</button>
+		<div id="response"></div>
+	</form>
+    
+    
+>>>>>>> 731572c9d701a644634e0dd59428fe2ebab950b1
 
 <head>
     <meta charset="UTF-8">

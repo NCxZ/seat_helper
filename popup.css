@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; width: 320px; padding: 10px; margin: 0; }
 .container { display: flex; flex-direction: column; gap: 10px; }
 .status-box { padding: 10px; border-radius: 5px; background: #f0f0f0; display: flex; align-items: center; gap: 10px; }
@@ -10,3 +11,90 @@ button { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: point
 .danger-btn { background: #c0392b; color: white; }
 .secondary-btn { background: #bdc3c7; font-size: 11px; padding: 4px; width: auto; align-self: flex-end; }
 .log-box { font-family: monospace; font-size: 10px; color: #666; max-height: 80px; overflow-y: auto; background: #fafafa; border: 1px solid #eee; padding: 5px; margin-top: 10px; }
+=======
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f4;
+    color: #333;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden; /* Dikey kaydırma çubuğunu engelle */
+}
+
+h1 {
+    text-align: center;
+    color: #444;
+    font-size: 18px; /* Başlık daha küçük yapıldı */
+    margin: 0 0 10px 0; /* Başlık altındaki boşluk daraltıldı */
+}
+
+#ticket-form {
+    background: #fff;
+    padding: 10px 15px; /* Üst ve alt padding daraltıldı, sağ ve sol aynı kaldı */
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    width: 300px; /* Yatay genişlik 300px yapıldı */
+    height: 450px;
+    max-width: 100%; /* Genişlik ekran boyutuna göre ayarlanabilir */
+    box-sizing: border-box;
+    overflow-y: auto; /* İçerik taşarsa kaydırma çubuğu gösterilsin */
+}
+
+label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 3px; /* Etiketler arasındaki boşluk daraltıldı */
+    color: #555;
+    font-size: 14px; /* Etiket yazısı biraz küçültüldü */
+}
+
+input[type="date"], 
+select {
+    width: 100%; /* Genişliği tam form genişliğine yaydık */
+    padding: 6px; /* Girdi elemanlarında daha az boşluk */
+    margin-bottom: 10px; /* Dikey boşluk daraltıldı */
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px; /* Yazı boyutu küçültüldü */
+}
+
+.swap-btn {
+    cursor: pointer;
+    font-size: 16px; /* Buton fontu küçültüldü */
+    margin: 0 0 10px 0; /* Dikey boşluk daraltıldı */
+    display: inline-block;
+    color: #007bff;
+    text-decoration: none;
+}
+
+.swap-btn:hover {
+    text-decoration: underline;
+}
+
+button {
+    width: 100%;
+    padding: 8px; /* Buton padding'i daraltıldı */
+    background-color: #007bff;
+    border: none;
+    color: white;
+    font-size: 14px; /* Buton yazısı küçültüldü */
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+#response {
+    margin-top: 10px; /* Yanıt kısmı daha yakın */
+    text-align: center;
+    font-weight: bold;
+    color: #28a745; /* Yeşil renk eklendi */
+}
+>>>>>>> 731572c9d701a644634e0dd59428fe2ebab950b1
