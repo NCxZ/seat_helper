@@ -99,82 +99,74 @@ async function checkSeats() {
         }],
         passengerTypeCounts: [{ id: 0, count: 1 }],
         searchReservation: false,
-        searchType: "DOMESTIC",
-        blTrainTypes: []
+        blTrainTypes: ["TURISTIK_TREN"]
     };
 
     try {
         const responseData = await postRequest(seferUrl, seferBody, authToken, apiHeaders);
-        if (!responseData || !Array.isArray(responseData)) {
+        // Check if response has valid legs (New API) OR is an array (Old API)
+        if (!responseData || (!Array.isArray(responseData) && (!responseData.trainLegs || responseData.trainLegs.length === 0))) {
             console.log("Check seats: Invalid response or no trains", responseData);
             return;
         }
 
-        // The response is an array of train availabilities directly or wrapped? 
-        // Based on subagent, it contains trainLegs and trainAvailabilities.
-        // Let's assume responseData IS the list of result objects.
+        console.log("Response Data Valid. Searching for availability...");
 
-        // Find the target train by time.
-        // The API returns 'departureDate' usually as "YYYY-MM-DDTHH:mm:ss" or similar ISO?
-        // Subagent said "departureDate: 31-12-2025 21:00:00".
-        // We need to match the time "HH:mm" from config.time.
-
-        // Flatten the structure if needed, but likely responseData is [ { trainAvailabilityId:..., trainLegs: [...] } ]
-
-        const targetSefer = responseData.find(sefer => {
-            // Find departure time in trainLegs[0]
-            if (!sefer.trainLegs || sefer.trainLegs.length === 0) return false;
-
-            // Extract time from departureDate string. 
-            // Format seen: "31-12-2025 21:00:00" -> This looks like DD-MM-YYYY HH:mm:ss in request, but response might be ISO?
-            // Let's assume response matches standard or construct a Date.
-            // Safe parsing:
-            const leg = sefer.trainLegs[0];
-            const dDate = leg.departureDate; // e.g. "2025-12-31T06:00:00" or generic
-
-            // Use simple string match if format is consistent, or Date parse
-            // If date is "YYYY-MM-DDTHH:mm:ss", splice.
-            // If date is "DD-MM-YYYY HH:mm:ss", splice.
-
-            // Let's try to parse into "HH:mm"
-            let timeStr = "";
-            if (dDate.includes("T")) {
-                timeStr = dDate.split("T")[1].substring(0, 5);
-            } else {
-                // Assume "DD-MM-YYYY HH:mm:ss" -> split space, get 2nd part
-                const parts = dDate.split(" ");
-                if (parts.length > 1) {
-                    timeStr = parts[1].substring(0, 5);
+        // Correctly handle new API structure where responseData contains trainLegs
+        let allTrains = [];
+        if (responseData.trainLegs && responseData.trainLegs.length > 0) {
+            // Extract all trains from all legs (usually 1 leg for direct)
+            responseData.trainLegs.forEach(leg => {
+                if (leg.trainAvailabilities) {
+                    leg.trainAvailabilities.forEach(availability => {
+                        if (availability.trains) {
+                            allTrains.push(...availability.trains);
+                        }
+                    });
                 }
-            }
+            });
+        } else if (Array.isArray(responseData)) {
+            allTrains = responseData;
+        }
 
-            return timeStr === time;
+        // Match multi-times
+        const matchesTimes = currentConfig.times || [currentConfig.time];
+
+        const matchingTrains = allTrains.filter(train => {
+            let timeStr = "";
+            if (train.segments && train.segments.length > 0) {
+                const d = new Date(train.segments[0].departureTime);
+                timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+            }
+            return matchesTimes.includes(timeStr);
         });
 
-        if (targetSefer) {
-            console.log(`Checking train at ${time}`);
+        for (const targetTrain of matchingTrains) {
+            console.log(`Checking train: ${targetTrain.name} (${targetTrain.id})`);
 
-            // Check trainAvailabilities
-            // Structure assumption: targetSefer.trainAvailabilities is array of objects { classId, remainingSeatCount?, ... }
-            // Subagent said "Capacities: Business (16 seats)".
+            const allowed = currentConfig.allowedClasses || {};
+            let hasSeat = false;
 
-            // We'll iterate and look for ANY positive capacity.
-            if (targetSefer.trainAvailabilities) {
-                const hasSeat = targetSefer.trainAvailabilities.some(av => {
-                    // Check common keys for capacity
-                    const cap = av.capacity || av.remainingSeatCount || av.emptySeatCount || 0;
-                    return cap > 0;
+            if (targetTrain.cabinClassAvailabilities) {
+                targetTrain.cabinClassAvailabilities.forEach(cc => {
+                    const cabinName = cc.cabinClass ? cc.cabinClass.name : "";
+
+                    // Check if this specific cabin name is allowed AND has seats
+                    if (allowed[cabinName] === true && cc.availabilityCount > 0) {
+                        console.log(`FOUND SEAT! Train: ${targetTrain.name}, Class: ${cabinName}, Count: ${cc.availabilityCount}`);
+                        hasSeat = true;
+                    }
                 });
+            }
 
-                if (hasSeat) {
-                    console.log(`FOUND SEATS for ${time}!`);
-                    stopMonitoring();
-                    // Pass 0, 0 as dummy vagon/seat since we don't know exact ones yet.
-                    notifyAndAct(currentConfig, targetSefer.trainAvailabilityId, "Any", "Found");
-                    return;
-                }
+            if (hasSeat) {
+                console.log(`STOPPING: Found seats for ${targetTrain.name}`);
+                stopMonitoring();
+                notifyAndAct(currentConfig, targetTrain.id, "Any", "Found");
+                return; // Match found, stop loop
             }
         }
+
 
     } catch (err) {
         console.error("Check loop error:", err);
