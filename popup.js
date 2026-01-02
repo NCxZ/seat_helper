@@ -22,13 +22,18 @@ document.addEventListener("DOMContentLoaded", async () => {
         updateStatus("Token Yok! Lütfen TCDD sayfasını yenileyin.", "red");
     }
 
-    // 2. Load Stations
-    await loadStations();
+    // 2. Load Stations and Restore Inputs
+    await loadStations(); // This will now also call restoreInputs internally to ensure sync
 
-    // 3. Restore previous inputs
-    restoreInputs();
+    // 4. Set minimum date to today
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+    document.getElementById("date").setAttribute("min", todayStr);
 
-    // 4. Listeners
+    // 5. Listeners
     document.getElementById("btn-start").addEventListener("click", startMonitoring);
     document.getElementById("btn-stop").addEventListener("click", stopMonitoring);
     document.getElementById("swap-locations").addEventListener("click", swapLocations);
@@ -98,6 +103,9 @@ async function loadStations() {
             // Restore status if token is ok
             if (authToken) updateStatus("Token Hazır", "green");
             else updateStatus("Token Yok!", "red");
+
+            // Restore inputs AFTER options are added to DOM
+            restoreInputs();
 
         } else {
             log("Gelen istasyon verisi hatalı formatta.");
@@ -211,21 +219,58 @@ async function fetchSeferTimes() {
                 if (leg.trainAvailabilities) {
                     leg.trainAvailabilities.forEach(item => {
                         if (item.trains && item.trains.length > 0) {
-                            const mainTrain = item.trains[0];
-                            if (mainTrain.segments && mainTrain.segments.length > 0) {
-                                const trSegment = mainTrain.segments[0];
-                                const timestamp = trSegment.departureTime;
-                                const d = new Date(timestamp);
-                                const timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+                            item.trains.forEach(train => {
+                                if (train.segments && train.segments.length > 0) {
+                                    const trSegment = train.segments[0];
+                                    const timestamp = trSegment.departureTime;
+                                    const d = new Date(timestamp);
+                                    const timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
 
-                                // Check for duplicates before adding
-                                if (!allFetchedTrains.find(t => t.timeStr === timeStr)) {
-                                    allFetchedTrains.push({
-                                        ...mainTrain,
-                                        timeStr: timeStr
-                                    });
+                                    // Collect all possible cabin classes from this train object
+                                    const classesFound = [];
+
+                                    // Source 1: cabinClassAvailabilities
+                                    if (train.cabinClassAvailabilities) {
+                                        train.cabinClassAvailabilities.forEach(cc => {
+                                            if (cc.cabinClass && cc.cabinClass.name) classesFound.push(cc);
+                                        });
+                                    }
+
+                                    // Source 2: availableFareInfo (more comprehensive in some API versions)
+                                    if (train.availableFareInfo) {
+                                        train.availableFareInfo.forEach(fare => {
+                                            if (fare.cabinClasses) {
+                                                fare.cabinClasses.forEach(cc => {
+                                                    if (cc.cabinClass && cc.cabinClass.name) {
+                                                        // Prevent duplicates within the same train object
+                                                        if (!classesFound.find(existing => existing.cabinClass.name === cc.cabinClass.name)) {
+                                                            classesFound.push(cc);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+
+                                    // Check if we already have a train at this time
+                                    let existingTrain = allFetchedTrains.find(t => t.timeStr === timeStr);
+                                    if (existingTrain) {
+                                        // Merge new classes into existing train entry
+                                        classesFound.forEach(newCC => {
+                                            if (!existingTrain.cabinClassAvailabilities.find(ecc => ecc.cabinClass.name === newCC.cabinClass.name)) {
+                                                existingTrain.cabinClassAvailabilities.push(newCC);
+                                            }
+                                        });
+                                    } else {
+                                        // Add as new entry
+                                        allFetchedTrains.push({
+                                            ...train,
+                                            cabinClassAvailabilities: classesFound,
+                                            timeStr: timeStr
+                                        });
+                                    }
                                 }
-                            }
+                            });
                         }
                     });
                 }
@@ -264,38 +309,57 @@ async function fetchSeferTimes() {
 function updateCabinClasses() {
     const timeCheckboxes = document.querySelectorAll(".time-checkbox");
     const container = document.getElementById("class-checkbox-container");
-    container.innerHTML = ""; // Clear existing
 
     // Get selected times
     const selectedTimes = Array.from(timeCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+
     if (selectedTimes.length === 0) {
         container.innerHTML = '<span style="font-size:11px; color:#999;">Önce sefer seçin</span>';
         return;
     }
 
-    // Find all unique cabin classes in selected trains
-    const availableClassNames = new Set();
+    if (!allFetchedTrains || allFetchedTrains.length === 0) {
+        container.innerHTML = '<span style="font-size:11px; color:#999;">Sefer bulunamadı</span>';
+        return;
+    }
+
+    // Capture currently checked classes to restore them
+    const previouslyChecked = new Set();
+    container.querySelectorAll("input:checked").forEach(cb => previouslyChecked.add(cb.value));
+
+    const allClassNames = new Set();
     allFetchedTrains.forEach(train => {
+        // Filter: Only include classes from trains that are selected by time
         if (selectedTimes.includes(train.timeStr)) {
             if (train.cabinClassAvailabilities) {
                 train.cabinClassAvailabilities.forEach(cc => {
                     if (cc.cabinClass && cc.cabinClass.name) {
-                        availableClassNames.add(cc.cabinClass.name);
+                        allClassNames.add(cc.cabinClass.name);
                     }
                 });
             }
         }
     });
 
-    // Create checkboxes for found classes
-    if (availableClassNames.size === 0) {
-        container.innerHTML = '<span style="font-size:11px; color:#999;">Uygun sınıf bulunamadı</span>';
+    if (allClassNames.size === 0) {
+        container.innerHTML = '<span style="font-size:11px; color:#999;">Seçili seferler için sınıf bilgisi bulunamadı</span>';
         return;
     }
 
-    // Display labels with checkboxes
-    // Map of internal ID to display name if needed, but we can use API names
-    availableClassNames.forEach(name => {
+    container.innerHTML = "";
+
+    // Sort classes for better UX (Economy/Pulman first)
+    const sortedClasses = Array.from(allClassNames).sort((a, b) => {
+        const priority = ["EKONOMİ", "PULMAN", "BİSİNES", "ÖRTÜLÜ KUŞETLİ", "YATAKLI"];
+        const indexA = priority.indexOf(a);
+        const indexB = priority.indexOf(b);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return a.localeCompare(b);
+    });
+
+    sortedClasses.forEach(name => {
         const label = document.createElement("label");
         label.className = "checkbox-label";
 
@@ -304,8 +368,10 @@ function updateCabinClasses() {
         cb.value = name;
         cb.id = `class-${name.replace(/\s+/g, '-').toLowerCase()}`;
 
-        // Default check "EKONOMİ"
-        if (name === "EKONOMİ") cb.checked = true;
+        // Restore check OR default check common ones if nothing was selected before
+        if (previouslyChecked.has(name) || (previouslyChecked.size === 0 && (name === "EKONOMİ" || name === "PULMAN"))) {
+            cb.checked = true;
+        }
 
         label.appendChild(cb);
         label.appendChild(document.createTextNode(` ${name}`));
@@ -351,9 +417,10 @@ function startMonitoring() {
         date: formattedDate,
         apiDate: calculatedApiDate,
         simpleDate: `${day}.${month}.${year}`,
-        times, // Now an array
+        inputDate: dateVal,
+        times,
         gender,
-        allowedClasses // Pass as label:bool map
+        allowedClasses
     };
 
     chrome.runtime.sendMessage({ action: "START_MONITORING", config: config }, (res) => {
@@ -406,9 +473,55 @@ function saveInputs() {
 }
 
 function restoreInputs() {
-    chrome.storage.local.get(['savedInputs'], (res) => {
-        if (res.savedInputs) {
-            const d = res.savedInputs;
+    chrome.storage.local.get(['savedInputs', 'isMonitoring', 'monitoringConfig'], (res) => {
+        let d = res.savedInputs;
+
+        // If monitoring is active, use the active config instead of last saved inputs
+        if (res.isMonitoring && res.monitoringConfig) {
+            const mc = res.monitoringConfig;
+            let restoredDate = mc.inputDate;
+
+            // Fallback for older configs: try to get correct YYYY-MM-DD from simpleDate (DD.MM.YYYY)
+            if (!restoredDate && mc.simpleDate) {
+                const parts = mc.simpleDate.split('.');
+                if (parts.length === 3) {
+                    restoredDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                }
+            }
+
+            d = {
+                departure: mc.departure,
+                arrival: mc.arrival,
+                date: restoredDate || mc.date, // mc.date is a last resort label
+                times: mc.times || [],
+                gender: mc.gender,
+                savedClasses: mc.allowedClasses || {}
+            };
+        }
+
+        if (d) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            const todayStr = `${yyyy}-${mm}-${dd}`;
+
+            if (d.date && d.date.includes('-')) {
+                const parts = d.date.split('-');
+                if (parts.length === 3) {
+                    const savedDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                    if (savedDate < today) {
+                        d.date = todayStr;
+                    }
+                } else {
+                    d.date = todayStr;
+                }
+            } else {
+                d.date = todayStr;
+            }
+
             if (d.departure) document.getElementById("departure").value = d.departure;
             if (d.arrival) document.getElementById("arrival").value = d.arrival;
             if (d.date) document.getElementById("date").value = d.date;
@@ -425,12 +538,11 @@ function restoreInputs() {
                     }
                     updateCabinClasses();
                     // Restore class checkboxes
-                    if (d.savedClasses) {
-                        Object.keys(d.savedClasses).forEach(className => {
-                            const cb = document.querySelector(`#class-checkbox-container input[value='${className}']`);
-                            if (cb) cb.checked = d.savedClasses[className];
-                        });
-                    }
+                    const classesToRestore = d.savedClasses || {};
+                    Object.keys(classesToRestore).forEach(className => {
+                        const cb = document.querySelector(`#class-checkbox-container input[value='${className}']`);
+                        if (cb) cb.checked = classesToRestore[className];
+                    });
                 });
             }
         }
