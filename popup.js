@@ -406,7 +406,20 @@ function startMonitoring() {
     const classCheckboxes = document.querySelectorAll("#class-checkbox-container input[type='checkbox']");
     const allowedClasses = {};
     classCheckboxes.forEach(cb => {
-        allowedClasses[cb.value] = cb.checked;
+        let foundId = null;
+        // Try to find the ID for this class name from the fetched trains
+        if (allFetchedTrains && allFetchedTrains.length > 0) {
+            for (const train of allFetchedTrains) {
+                if (train.cabinClassAvailabilities) {
+                    const match = train.cabinClassAvailabilities.find(cc => cc.cabinClass && cc.cabinClass.name === cb.value);
+                    if (match && match.cabinClass) {
+                        foundId = match.cabinClass.id;
+                        break;
+                    }
+                }
+            }
+        }
+        allowedClasses[cb.value] = { checked: cb.checked, id: foundId };
     });
 
     const config = {

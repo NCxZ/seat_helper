@@ -73,10 +73,27 @@ function stopMonitoring() {
     console.log("Monitoring stopped.");
 }
 
+let bookingClasses = [];
+
+async function fetchBookingClasses() {
+    try {
+        const response = await fetch("https://cdn-api-prod-ytp.tcddtasimacilik.gov.tr/datas/booking-classes.json?environment=dev&userId=1");
+        if (response.ok) {
+            bookingClasses = await response.json();
+            console.log("Booking classes loaded:", bookingClasses.length);
+        }
+    } catch (e) {
+        console.error("Failed to load booking classes:", e);
+    }
+}
+
+// Call immediately
+fetchBookingClasses();
+
 async function checkSeats() {
     if (!currentConfig) return;
 
-    const { departure, arrival, apiDate, time, departureId, arrivalId } = currentConfig;
+    const { departure, arrival, apiDate, time, departureId, arrivalId, gender } = currentConfig;
 
     // Get token and headers
     const { authToken, apiHeaders } = await chrome.storage.local.get(["authToken", "apiHeaders"]);
@@ -87,8 +104,6 @@ async function checkSeats() {
 
     const seferUrl = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1";
 
-    // Reconstruct body for new API
-    // Note: apiDate should be "DD-MM-YYYY HH:mm:ss" formatted from popup
     const seferBody = {
         searchRoutes: [{
             departureStationId: departureId,
@@ -103,23 +118,17 @@ async function checkSeats() {
     };
 
     try {
+        // Ensure booking classes are loaded
+        if (bookingClasses.length === 0) await fetchBookingClasses();
+
         const responseData = await postRequest(seferUrl, seferBody, authToken, apiHeaders);
-        // Check if response has valid legs (New API) OR is an array (Old API)
-        if (!responseData || (!Array.isArray(responseData) && (!responseData.trainLegs || responseData.trainLegs.length === 0))) {
-            console.log("Check seats: Invalid response or no trains", responseData);
-            return;
-        }
 
-        console.log("Response Data Valid. Searching for availability...");
-
-        // Correctly handle new API structure where responseData contains trainLegs
         let allTrains = [];
-        if (responseData.trainLegs && responseData.trainLegs.length > 0) {
-            // Extract all trains from all legs (usually 1 leg for direct)
+        if (responseData && responseData.trainLegs && responseData.trainLegs.length > 0) {
             responseData.trainLegs.forEach(leg => {
                 if (leg.trainAvailabilities) {
                     leg.trainAvailabilities.forEach(availability => {
-                        if (availability.trains) {
+                        if (availability && Array.isArray(availability.trains)) {
                             allTrains.push(...availability.trains);
                         }
                     });
@@ -129,9 +138,12 @@ async function checkSeats() {
             allTrains = responseData;
         }
 
-        // Match multi-times
-        const matchesTimes = currentConfig.times || [currentConfig.time];
+        if (allTrains.length === 0) {
+            console.log("Check seats: No trains found.");
+            return;
+        }
 
+        const matchesTimes = currentConfig.times || [currentConfig.time];
         const matchingTrains = allTrains.filter(train => {
             let timeStr = "";
             if (train.segments && train.segments.length > 0) {
@@ -144,29 +156,109 @@ async function checkSeats() {
         for (const targetTrain of matchingTrains) {
             console.log(`Checking train: ${targetTrain.name} (${targetTrain.id})`);
 
-            const allowed = currentConfig.allowedClasses || {};
-            let hasSeat = false;
+            // We only check detailed map if there is ANY indication of availability, or just check always?
+            // The previous 'maybeAvailable' check is good optimization but let's be safe and check map if configured.
+            // For now, let's assume we proceed to check map if the train matches time.
 
-            if (targetTrain.cabinClassAvailabilities) {
-                targetTrain.cabinClassAvailabilities.forEach(cc => {
-                    const cabinName = cc.cabinClass ? cc.cabinClass.name : "";
+            try {
+                const seatMapUrl = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/seat-maps/load-by-train-id?environment=dev&userId=1";
+                const seatMapBody = {
+                    fromStationId: departureId,
+                    toStationId: arrivalId,
+                    trainId: targetTrain.id,
+                    legIndex: 0
+                };
+                const seatMapData = await postRequest(seatMapUrl, seatMapBody, authToken, apiHeaders);
 
-                    // Check if this specific cabin name is allowed AND has seats
-                    if (allowed[cabinName] === true && cc.availabilityCount > 0) {
-                        console.log(`FOUND SEAT! Train: ${targetTrain.name}, Class: ${cabinName}, Count: ${cc.availabilityCount}`);
-                        hasSeat = true;
+                if (seatMapData && seatMapData.seatMaps) {
+                    let foundVagon = null;
+                    let foundSeat = null;
+                    let foundTrainCarId = null;
+
+                    // Iterate over wagons in the response
+                    for (let i = 0; i < seatMapData.seatMaps.length; i++) {
+                        const wagon = seatMapData.seatMaps[i];
+                        // User Logic: Check if availableSeatCount > 0
+                        if (wagon.availableSeatCount > 0) {
+                            // Get all sellable seats in this wagon
+                            const allSeats = wagon.seatPrices || [];
+                            // Get occupied/allocated seats
+                            const occupiedSeats = wagon.allocationSeats || [];
+
+                            // Filter: Purchasable = All - Occupied
+                            const purchasableSeats = allSeats.filter(seat => {
+                                // Check if this seat number exists in occupied list
+                                const isOccupied = occupiedSeats.some(occ => occ.seatNumber === seat.seatNumber);
+                                return !isOccupied;
+                            });
+
+                            if (purchasableSeats.length > 0) {
+                                const vagonInfo = wagon.wagonNo || (i + 1);
+                                console.log(`[${targetTrain.name} - ${vagonInfo}. Vagon] Pubchasable Seats:`, JSON.stringify(purchasableSeats));
+                                // Now filter by User Allowed Ticket Types (Classes)
+                                const allowedClasses = currentConfig.allowedClasses || {};
+                                console.log("Allowed Classes for Check:", JSON.stringify(allowedClasses));
+
+                                const validSeat = purchasableSeats.find(seat => {
+                                    // 1. Direct ID Match (New Logic)
+                                    for (const key in allowedClasses) {
+                                        const val = allowedClasses[key];
+                                        if (val && typeof val === 'object' && val.checked && val.id === seat.cabinClassId) {
+                                            return true;
+                                        }
+                                    }
+
+                                    // 2. Fallback: Name Match (Old Logic)
+                                    const classInfo = bookingClasses.find(bc => bc.cabinClass && bc.cabinClass.id === seat.cabinClassId);
+                                    if (classInfo) {
+                                        const val = allowedClasses[classInfo.name];
+                                        if (val === true) return true; // Legacy boolean
+                                        if (val && typeof val === 'object' && val.checked) return true; // New object match by name
+                                    }
+                                    return false;
+                                });
+
+                                if (validSeat) {
+                                    // Found a valid match!
+                                    // Wagon numbering logic: user said trainIndex 0 -> 1. vagon.
+                                    // But usually wagon.wagonNo is available. Use it if present, else fallback.
+                                    foundVagon = wagon.wagonNo || (i + 1).toString();
+                                    foundSeat = validSeat.seatNumber;
+                                    foundTrainCarId = wagon.trainCarId; // User said trainCarId is here
+
+                                    console.log(`FOUND SPECIFIC SEAT: Vagon ${foundVagon}, Seat ${foundSeat}, ClassId: ${validSeat.cabinClassId}`);
+                                    break;
+                                }
+                            }
+                        }
                     }
-                });
-            }
 
-            if (hasSeat) {
-                console.log(`STOPPING: Found seats for ${targetTrain.name}`);
-                stopMonitoring();
-                notifyAndAct(currentConfig, targetTrain.id, "Any", "Found");
-                return; // Match found, stop loop
+                    if (foundVagon && foundSeat && foundTrainCarId) {
+                        console.log(`STOPPING: Proceeding with Vagon ${foundVagon}, Seat ${foundSeat}`);
+                        const configToUse = { ...currentConfig };
+
+                        let targetTime = "Any";
+                        if (targetTrain.segments && targetTrain.segments.length > 0) {
+                            const d = new Date(targetTrain.segments[0].departureTime);
+                            targetTime = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+                        }
+
+                        stopMonitoring();
+
+                        // *** NO API SEAT SELECTION ***
+                        // Previously we tried to select seat via API here, but user requested to skip it.
+                        // We will just open the page and let the content script click the seat.
+                        const apiSelectionSuccess = false;
+                        console.log("Skipping API selection, proceeding to UI automation...");
+
+                        notifyAndAct(configToUse, targetTrain.id, foundVagon, foundSeat, targetTime, apiSelectionSuccess);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.error("Error identifying specific seat:", e);
             }
         }
-
 
     } catch (err) {
         console.error("Check loop error:", err);
@@ -220,7 +312,7 @@ async function postRequest(url, body, token, savedHeaders = {}) {
     return response.json();
 }
 
-async function notifyAndAct(config, seferId, vagonNo, koltukNo) {
+async function notifyAndAct(config, seferId, vagonNo, koltukNo, targetTime) {
     // Notify User
     chrome.notifications.create({
         type: 'basic',
@@ -247,147 +339,435 @@ async function notifyAndAct(config, seferId, vagonNo, koltukNo) {
     chrome.scripting.executeScript({
         target: { tabId: tabId },
         func: automateBooking,
-        args: [config, vagonNo, koltukNo]
+        args: [{ ...config, vagonNo, koltukNo, targetTime }]
     });
 }
 
 // this function runs IN THE PAGE context
-async function automateBooking(config, vagonNo, koltukNo) {
-    console.log("Automation started...", config);
+async function automateBooking(config) {
+    const { vagonNo, koltukNo, targetTime } = config;
+    console.log("Automation started with config:", config, "Target Time:", targetTime);
+
+    // Ensure we use the specific train time found by the monitor
+    config.time = targetTime || config.time || (config.times ? config.times[0] : "");
+
+    const selectors = {
+        fromInput: "#fromTrainInput",
+        toInput: "#toTrainInput",
+        dateInput: "input[placeholder='GidişTarihi']",
+        searchBtn: "#searchSeferButton",
+        trainRow: (time) => `button[id^='gidis'][id$='btn']`, // We'll filter this by time in code
+        selectBtn: ".btn-danger", // "Seçin" button
+        continueBtn: ".btnContinue",
+        vagonButton: "button.btnWagon, .wagonMap button, button.vagonText",
+        seatCheckbox: (no) => `input.ui-wagon-item-checkbox[value='${no}'], input[id*='${no}'], label[for*='${no}'], [data-seat-no='${no}']`
+    };
 
     const waitFor = (selector, timeout = 10000) => {
         return new Promise((resolve, reject) => {
-            if (document.querySelector(selector)) return resolve(document.querySelector(selector));
+            const el = document.querySelector(selector);
+            if (el) return resolve(el);
             const observer = new MutationObserver(() => {
-                if (document.querySelector(selector)) {
+                const target = document.querySelector(selector);
+                if (target) {
                     observer.disconnect();
-                    resolve(document.querySelector(selector));
+                    resolve(target);
                 }
             });
             observer.observe(document.body, { childList: true, subtree: true });
             setTimeout(() => {
                 observer.disconnect();
-                reject("Timeout waiting for " + selector);
+                reject(new Error("Timeout waiting for " + selector));
             }, timeout);
         });
     };
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    const fillStation = async (inputSelector, value) => {
+        console.log(`Filling station: ${value} into ${inputSelector}`);
+        const input = await waitFor(inputSelector);
+
+        // Wait if disabled (especially for 'To' input)
+        let attempts = 0;
+        while (input.disabled && attempts < 50) {
+            await sleep(100);
+            attempts++;
+        }
+
+        input.focus();
+        input.value = ""; // Clear first
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
+        // Type character by character to trigger search
+        for (const char of value) {
+            input.value += char;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+            await sleep(5);
+        }
+
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // Optimize wait: check for dropdown items or timeout fast
+        try { await waitFor('.dropdown-item.station', 300); } catch (e) { }
+        await sleep(100);
+
+        // User suggested: Press ArrowDown then Enter to select from autocomplete
+        console.log(`Sending ArrowDown and Enter to ${inputSelector}`);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', keyCode: 40, bubbles: true }));
+        await sleep(100);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+        await sleep(200);
+
+        // TCDD site uses .dropdown-item.station buttons - Backup click if Enter didn't select it
+        const items = Array.from(document.querySelectorAll('.dropdown-item.station')).filter(el => {
+            const loc = el.querySelector('.textLocation');
+            const text = (loc ? loc.innerText : el.innerText).toUpperCase();
+            // Match the station name
+            return text.includes(value.toUpperCase()) && el.offsetParent !== null;
+        });
+
+        if (items.length > 0) {
+            console.log(`Clicking dropdown item for ${value} as fallback/confirmation`);
+            items[0].click();
+            await sleep(200);
+        }
+    };
+
     try {
         // Step 1: Search Form
-        const fromInput = document.getElementById("nereden");
-        const toInput = document.getElementById("nereye");
-        const dateInput = document.getElementById("trCalGid_input");
-        const searchBtn = document.getElementById("btnSeferSorgula");
+        let fromEl = document.querySelector(selectors.fromInput);
+        if (!fromEl) {
+            // Check if we are already on results page
+            const resultsCheck = document.querySelector(selectors.continueBtn) || document.querySelector("button[id^='gidis']");
+            if (resultsCheck) {
+                console.log("Already on results page, skipping search form.");
+            } else {
+                alert("Ana sayfada değilsiniz veya form bulunamadı. Lütfen TCDD anasayfasına gidin.");
+                return;
+            }
+        } else {
+            console.log("Filling search form...");
+            await fillStation(selectors.fromInput, config.departure);
+            await fillStation(selectors.toInput, config.arrival);
 
-        if (!fromInput || !toInput) {
-            alert("Ana sayfada değilsiniz veya form bulunamadı.");
+            const dateEl = document.querySelector(selectors.dateInput);
+            if (dateEl) {
+                console.log(`Selecting date using Datepicker UI: ${config.simpleDate}`);
+                const [targetDay] = config.simpleDate.split('.'); // Get "05" from "05.01.2026"
+                const dayInt = parseInt(targetDay, 10).toString();
+
+                dateEl.focus();
+                dateEl.click(); // Open Datepicker
+                await sleep(300);
+
+                // Find the day in the calendar grid (handles multiple months if visible)
+                const calendarTables = document.querySelectorAll('.calendar-table');
+                let daySelected = false;
+
+                if (calendarTables.length > 0) {
+                    // Usually the first calendar is the current/target month if we just opened it
+                    const firstCalendar = calendarTables[0];
+                    const dayElements = Array.from(firstCalendar.querySelectorAll('span, td'));
+
+                    // Filter for the exact day number. We avoid 'next-month' or 'prev-month' classes if present
+                    const dayToClick = dayElements.find(el =>
+                        el.textContent.trim() === dayInt &&
+                        !el.classList.contains('off') && // commonly used for other month days
+                        el.offsetParent !== null
+                    );
+
+                    if (dayToClick) {
+                        console.log(`Clicking day ${dayInt} in calendar.`);
+                        dayToClick.click();
+                        daySelected = true;
+                    }
+                }
+
+                if (!daySelected) {
+                    console.warn("Could not find day in datepicker, falling back to basic value set.");
+                    dateEl.value = config.simpleDate;
+                    dateEl.dispatchEvent(new Event('input', { bubbles: true }));
+                    dateEl.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+
+                await sleep(300);
+                document.body.click(); // Ensure overlay is closed
+            }
+
+            const searchBtn = document.querySelector(selectors.searchBtn);
+            if (searchBtn) {
+                console.log("Clicking Search Button...");
+                await sleep(200);
+                searchBtn.click();
+                // Wait for the results page to start loading and old results to clear
+                await sleep(500);
+            } else {
+                throw new Error("Arama butonu bulunamadı.");
+            }
+        }
+
+        // Step 2: Select Train in Results
+        console.log("Waiting for results...");
+        await waitFor("button[id^='gidis']", 20000);
+        await sleep(500); // Wait for full render
+
+        const trainButtons = Array.from(document.querySelectorAll("button[id^='gidis'][id$='btn']"));
+        let targetButton = null;
+
+        console.log(`Searching for train at ${config.time}...`);
+        for (const btn of trainButtons) {
+            const timeEl = btn.querySelector('time');
+            const btnText = btn.innerText;
+            if ((timeEl && timeEl.innerText.includes(config.time)) || btnText.includes(config.time)) {
+                targetButton = btn;
+                break;
+            }
+        }
+
+        if (targetButton) {
+            console.log("Found train button, clicking to expand...");
+            targetButton.click();
+            await sleep(2000);
+
+            // TCDD results page expands a section containing vagon types and a "Seçin" button
+            const expandedAreaId = targetButton.getAttribute('data-target') || targetButton.id.replace('btn', '');
+            const expandedArea = document.querySelector(expandedAreaId) || targetButton.closest('.card').querySelector('.collapse');
+
+            if (expandedArea) {
+                // Step 2.1: Select Vagon Type (Economy/Business etc.)
+                const vagonTypeButtons = Array.from(expandedArea.querySelectorAll('button.btnTicketType'));
+                const allowed = config.allowedClasses || {};
+
+                let vagonSelected = false;
+                for (const vBtn of vagonTypeButtons) {
+                    const typeText = vBtn.innerText.toUpperCase();
+                    // Match against allowed classes (e.g. "EKONOMİ", "BUSINESS"/"BUSİNESS")
+                    const isAllowed = Object.keys(allowed).some(cls =>
+                        allowed[cls] === true &&
+                        (typeText.includes(cls.toUpperCase()) || cls.toUpperCase().includes(typeText.replace('İ', 'I')))
+                    );
+
+                    if (isAllowed && !vBtn.classList.contains('disabled')) {
+                        console.log(`Selecting vagon type: ${typeText}`);
+                        vBtn.click();
+                        vagonSelected = true;
+                        await sleep(800);
+                        break;
+                    }
+                }
+
+                if (!vagonSelected && vagonTypeButtons.length > 0) {
+                    console.warn("None of the allowed classes were selectable or found, proceeding with default.");
+                }
+
+                // Step 2.2: Click "Seçin" button
+                const selectBtn = expandedArea.querySelector('button.btn-danger') || await waitFor(selectors.selectBtn);
+                if (selectBtn) {
+                    console.log("Clicking 'Seçin' button...");
+                    selectBtn.click();
+                    await sleep(2000);
+                }
+            }
+
+            // Step 2.3: Look for "Devam Et" button to move to seat selection
+            try {
+                const continueBtn = await waitFor(selectors.continueBtn, 5000);
+                console.log("Clicking Continue button...");
+                continueBtn.click();
+            } catch (e) {
+                console.warn("Continue button not found immediately, might be on next page or handled.");
+            }
+        } else {
+            throw new Error(`Saat ${config.time} için uygun sefer bulunamadı.`);
+        }
+
+        // Step 3: Seat Selection Page
+        console.log(`Waiting for seat selection page... Target: Vagon ${vagonNo}, Seat ${koltukNo}`);
+        try {
+            // Try to wait for any of the vagon buttons to appear
+            await waitFor(selectors.vagonButton, 20000);
+        } catch (e) {
+            console.warn("Vagon butonları standart seçiciyle bulunamadı, alternatif aranıyor...");
+            // Manual fallback wait if the specific selector fails
+            await sleep(5000);
+        }
+        await sleep(3000); // Give extra time for layout to stabilize
+
+        // Select Vagon
+        const vagonButtons = Array.from(document.querySelectorAll(selectors.vagonButton));
+        let vagonBtnFound = false;
+        console.log(`Looking for Vagon: ${vagonNo} among ${vagonButtons.length} buttons`);
+
+        for (const b of vagonButtons) {
+            const bText = b.textContent.trim().toUpperCase();
+            const target = vagonNo.toString().toUpperCase();
+
+            // Match "2" with "2. VAGON" or "2.VAGON" or exact match
+            const isMatch = bText === target ||
+                bText.startsWith(target + ".") ||
+                bText.startsWith(target + " ") ||
+                bText.includes(target + ". VAGON");
+
+            if (isMatch) {
+                console.log(`MATCH FOUND! Clicking Vagon button: ${bText}`);
+                b.click();
+                vagonBtnFound = true;
+                break;
+            }
+        }
+
+        if (!vagonBtnFound && vagonButtons.length > 0) {
+            console.warn(`Vagon ${vagonNo} tam olarak bulunamadı. Metinler:`, vagonButtons.map(b => b.textContent.trim()));
+            // Try fallback: click by index if vagonNo is small and button text contains it
+            const fallback = vagonButtons.find(b => b.textContent.includes(vagonNo.toString()));
+            if (fallback) {
+                console.log("Using non-exact fallback for vagon selection...");
+                fallback.click();
+                vagonBtnFound = true;
+            } else {
+                console.log("Falling back to first wagon.");
+                vagonButtons[0].click();
+            }
+        }
+
+        await sleep(2500);
+
+        // Select Seat
+        console.log(`Attempting to select seat: ${koltukNo}`);
+
+        const findSeatElement = (seatNo) => {
+            const noLower = seatNo.toLowerCase();
+            // Strategy 1: seatNumber div
+            const seatNumberDivs = Array.from(document.querySelectorAll('.seatNumber'));
+            const matchingSeatDiv = seatNumberDivs.find(div => div.textContent.trim().toLowerCase() === noLower);
+            if (matchingSeatDiv) return matchingSeatDiv.closest('.seatMapClick');
+
+            // Strategy 2: Checkbox/Input value
+            const input = document.querySelector(selectors.seatCheckbox(seatNo));
+            if (input) return input.closest('.seatMapClick') || input;
+
+            return null;
+        };
+
+        const isSeatSelected = () => {
+            // Check if any expected input is checked
+            const checkedInput = document.querySelector("input[name='seatIds']:checked, input.ui-wagon-item-checkbox:checked");
+
+            // Legacy form check
+            const genderForm = document.querySelector("#cinsiyet_secimi_form");
+            const isGenderFormVisible = genderForm && genderForm.offsetParent !== null;
+
+            // New Popover check (Crucial fix)
+            const popoverBody = document.querySelector(".popover-body");
+            const isPopoverVisible = popoverBody && popoverBody.offsetParent !== null;
+
+            console.log("Selection Check:", { checkedInput: !!checkedInput, isGenderFormVisible, isPopoverVisible });
+
+            return !!checkedInput || isGenderFormVisible || isPopoverVisible;
+        };
+
+        let seatEl = findSeatElement(koltukNo);
+        let selectionSuccess = false;
+
+        if (seatEl) {
+            console.log(`Found element for ${koltukNo}, clicking...`);
+            // seatEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); // Removed as requested
+            // await sleep(500); // Removed wait
+
+            // Robust Click
+            seatEl.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            seatEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            seatEl.click();
+            seatEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+            await sleep(1000); // Wait for potential network request/UI update
+
+            if (isSeatSelected()) {
+                console.log(`Seat ${koltukNo} successfully selected.`);
+                selectionSuccess = true;
+            } else {
+                console.warn(`Click on ${koltukNo} did not result in selection. Maybe occupied.`);
+            }
+        } else {
+            console.warn(`Specific seat element for ${koltukNo} not found.`);
+        }
+
+        // --- NO FALLBACK: Only specific seat selection is allowed ---
+        // If the specific seat was not found or selectable, we stop here.
+
+        if (!selectionSuccess) {
+            alert("Otomasyon: İstenen koltuk ve diğer alternatifler seçilemedi. Lütfen manuel seçiniz.");
             return;
         }
 
-        fromInput.value = config.departure;
-        toInput.value = config.arrival;
-
-        // Date format handling: config.originalDateFormatted is assumed to be passed or reconstruct it.
-        // Assuming config.date is "Short Month Day, Year Time" format used in API, we need "DD.MM.YYYY" for UI?
-        // Let's rely on the user having the correct simple date format in config if possible, or parse it.
-        // Actually, let's use the one passed in config.simpleDate (we should add this to config).
-        if (config.simpleDate) dateInput.value = config.simpleDate;
-
-        searchBtn.click();
-
-        // Step 2: Select Train
-        await waitFor("tbody#mainTabView\\:gidisSeferTablosu_data");
-        await sleep(1000); // Allow render
-
-        const rows = document.querySelectorAll("tbody#mainTabView\\:gidisSeferTablosu_data tr");
-        let trainFound = false;
-
-        for (const row of rows) {
-            const timeEl = row.querySelector("span.seferSorguTableBuyuk");
-            if (timeEl && timeEl.textContent.trim() === config.time) {
-                const btn = row.querySelector("div.seferSecButton");
-                if (btn) {
-                    btn.click();
-                    trainFound = true;
-                    break;
-                }
-            }
-        }
-
-        if (!trainFound) throw new Error("Train not found in list");
-
-        // Wait for Continue button and click
-        const continueBtn = await waitFor("[id='mainTabView:btnDevam44']");
-        continueBtn.click();
-
-        // Step 3: Select Wagon
-        // Wait for wagons to load
-        await waitFor("div.vagonHaritaDiv");
-        await sleep(2000);
-
-        // This part is tricky because vagon indices might not match 1:1 with displayed text or order.
-        // We usually need to find the button that has text "Vagon <vagonNo>" or similar?
-        // Or if we know the index. The previous code used index.
-        // Let's try to find by text if possible, or fallback to index.
-
-        // Actually, the API gives vagonSiraNo. The UI usually lists them.
-        // Let's assume the previous logic of `mainTabView:j_idt206:${vagonNo - 1}:gidisVagonlariGost` was correct for INDEX based.
-        // But vagonSiraNo might be just an ID.
-        // Let's look for any element containing the text of the vagon number?
-
-        // Safe bet: Try the dynamic ID approach from old code, but wrap in try/catch or search.
-        // Let's iterate buttons.
-        const vagonButtons = document.querySelectorAll("button.vagonText");
-        let vagonBtn = null;
-        // Basic search
-        vagonButtons.forEach(b => {
-            if (b.textContent.includes(vagonNo.toString())) vagonBtn = b;
-        });
-
-        if (vagonBtn) {
-            vagonBtn.click();
-        } else {
-            console.warn("Could not match vagon number exactly, trying index assumption...");
-            // Fallback to old selector attempt
-            // Note: ID selectors with colons need escaping
-            const fallbackSelector = `[id='mainTabView:j_idt206:${vagonNo - 1}:gidisVagonlariGost']`;
-            const fbBtn = document.querySelector(fallbackSelector);
-            if (fbBtn) fbBtn.click();
-        }
-
-        // Step 4: Select Seat
-        await sleep(2000); // Wait for seat map
-        // Seat checkboxes typically have value=koltukNo
-        const seatCheckbox = document.querySelector(`input.ui-wagon-item-checkbox[value='${koltukNo}']`);
-        if (seatCheckbox) {
-            seatCheckbox.click();
-            // Scroll to it
-            seatCheckbox.scrollIntoView();
-        } else {
-            throw new Error(`Seat ${koltukNo} not found in UI`);
-        }
-
-        // Step 5: Gender
-        await sleep(1000);
-        // Prompt user or auto select if we had gender info. Config should have it.
+        // Step 4: Gender Selection
         if (config.gender) {
-            const form = await waitFor("form#cinsiyet_secimi_form");
-            // Male: 2nd child? Female: 3rd? Need verification.
-            // Usually buttons have text "Erkek" or "Kadın".
-            const buttons = form.querySelectorAll("button");
-            for (const b of buttons) {
-                if (config.gender === "Erkek" && b.textContent.includes("Bay")) b.click();
-                if (config.gender === "Kadın" && b.textContent.includes("Bayan")) b.click();
+            console.log("Handling gender selection for:", config.gender);
+            // Wait for gender popover to appear
+            await sleep(500);
+
+            const isWomen = config.gender === "Kadın" || config.gender === "W";
+            const targetKeyword = isWomen ? "women" : "man";
+
+            try {
+                // Robust approach: Look for specific images anywhere in the document
+                let genderBtn = null;
+                // Retry getting buttons by position
+                for (let k = 0; k < 15; k++) {
+                    const btns = document.querySelectorAll(".popover-body .popoverBtn");
+                    if (btns.length >= 2) {
+                        // Index 0: Women, Index 1: Men
+                        if (isWomen) {
+                            genderBtn = btns[0];
+                        } else {
+                            genderBtn = btns[1];
+                        }
+                        break;
+                    }
+                    await sleep(200);
+                }
+
+                if (genderBtn) {
+                    console.log("Gender button found. Clicking...");
+                    genderBtn.click();
+                } else {
+                    console.warn(`Gender button for ${keyword} not found after wait.`);
+                }
+
+            } catch (err) {
+                console.error("Error selecting gender:", err);
             }
         }
 
-        alert("Bilet Bulundu ve Seçildi! Lütfen ödeme adımına ilerleyin.");
+
+        // Final Success Message
+        console.log("Booking automation completed successfully.");
+        // Play sound or notification if possible (in context usually not allowed, but alert works)
+        // We use a non-blocking notification approach primarily, but alert stops the user to pay attention
+
+        // Check if there is a confirm button or if the user just needs to pay
+        // alert("Bilet seçildi! Ödeme adımına geçebilirsiniz.");
+
+        // Create a visual indicator on the page
+        const overlay = document.createElement('div');
+        overlay.style.position = 'fixed';
+        overlay.style.top = '20px';
+        overlay.style.right = '20px';
+        overlay.style.backgroundColor = '#4CAF50';
+        overlay.style.color = 'white';
+        overlay.style.padding = '20px';
+        overlay.style.zIndex = '99999';
+        overlay.style.fontSize = '16px';
+        overlay.style.borderRadius = '5px';
+        overlay.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+        overlay.innerText = "BİLET SEÇİLDİ! Lütfen Ödeme Yapın.";
+        document.body.appendChild(overlay);
 
     } catch (e) {
         console.error("Automation error:", e);
-        alert("Otomasyon hatası: " + e.message);
+        alert("Otomasyon sırasında hata: " + e.message);
     }
 }
 
@@ -395,10 +775,6 @@ async function fetchStations() {
     console.log("Fetching stations from API...");
 
     try {
-        // The station list is hosted on a CDN and does not require complex auth headers.
-        // It seems to be a static file.
-        // URL: https://cdn-api-prod-ytp.tcddtasimacilik.gov.tr/datas/stations.json?environment=dev&userId=1
-
         const response = await fetch("https://cdn-api-prod-ytp.tcddtasimacilik.gov.tr/datas/stations.json?environment=dev&userId=1", {
             method: "GET"
         });
@@ -409,7 +785,6 @@ async function fetchStations() {
 
         const data = await response.json();
 
-        // This endpoint returns current valid stations array directly: [{name:..., id:...}, ...]
         if (Array.isArray(data)) {
             return data;
         } else if (data && data.stations) {
