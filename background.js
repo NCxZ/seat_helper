@@ -765,6 +765,13 @@ async function automateBooking(config) {
         overlay.innerText = "BİLET SEÇİLDİ! Lütfen Ödeme Yapın.";
         document.body.appendChild(overlay);
 
+        // Remove after 5 seconds
+        setTimeout(() => {
+            if (overlay && overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+        }, 5000);
+
     } catch (e) {
         console.error("Automation error:", e);
         alert("Otomasyon sırasında hata: " + e.message);
