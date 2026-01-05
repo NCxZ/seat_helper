@@ -1,5 +1,7 @@
 let monitoringInterval = null;
 let currentConfig = null;
+let isChecking = false;
+let cachedTrains = null;
 
 // Listen for network requests to capture the Authorization token
 chrome.webRequest.onBeforeSendHeaders.addListener(
@@ -58,11 +60,12 @@ chrome.storage.local.get(['monitoringConfig', 'isMonitoring'], (data) => {
 function startMonitoring(config) {
     if (monitoringInterval) clearInterval(monitoringInterval);
     currentConfig = config;
+    cachedTrains = null;
     chrome.storage.local.set({ isMonitoring: true, monitoringConfig: config });
 
     console.log("Monitoring started with config:", config);
     checkSeats(); // Immediate check
-    monitoringInterval = setInterval(checkSeats, 10000); // Check every 10 seconds
+    monitoringInterval = setInterval(checkSeats, 1000); // Check every 1 second
 }
 
 function stopMonitoring() {
@@ -92,73 +95,93 @@ fetchBookingClasses();
 
 async function checkSeats() {
     if (!currentConfig) return;
-
-    const { departure, arrival, apiDate, time, departureId, arrivalId, gender } = currentConfig;
-
-    // Get token and headers
-    const { authToken, apiHeaders } = await chrome.storage.local.get(["authToken", "apiHeaders"]);
-    if (!authToken) {
-        console.error("No auth token available. Please refresh TCDD page.");
+    if (isChecking) {
+        console.log("Check skipped - previous check still in progress.");
         return;
     }
-
-    const seferUrl = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1";
-
-    const seferBody = {
-        searchRoutes: [{
-            departureStationId: departureId,
-            departureStationName: departure,
-            arrivalStationId: arrivalId,
-            arrivalStationName: arrival,
-            departureDate: apiDate
-        }],
-        passengerTypeCounts: [{ id: 0, count: 1 }],
-        searchReservation: false,
-        blTrainTypes: ["TURISTIK_TREN"]
-    };
+    isChecking = true;
 
     try {
-        // Ensure booking classes are loaded
-        if (bookingClasses.length === 0) await fetchBookingClasses();
 
-        const responseData = await postRequest(seferUrl, seferBody, authToken, apiHeaders);
+        const { departure, arrival, apiDate, time, departureId, arrivalId, gender } = currentConfig;
 
-        let allTrains = [];
-        if (responseData && responseData.trainLegs && responseData.trainLegs.length > 0) {
-            responseData.trainLegs.forEach(leg => {
-                if (leg.trainAvailabilities) {
-                    leg.trainAvailabilities.forEach(availability => {
-                        if (availability && Array.isArray(availability.trains)) {
-                            allTrains.push(...availability.trains);
-                        }
-                    });
-                }
-            });
-        } else if (Array.isArray(responseData)) {
-            allTrains = responseData;
-        }
-
-        if (allTrains.length === 0) {
-            console.log("Check seats: No trains found.");
+        // Get token and headers
+        const { authToken, apiHeaders } = await chrome.storage.local.get(["authToken", "apiHeaders"]);
+        if (!authToken) {
+            console.error("No auth token available. Please refresh TCDD page.");
             return;
         }
 
-        const matchesTimes = currentConfig.times || [currentConfig.time];
-        const matchingTrains = allTrains.filter(train => {
-            let timeStr = "";
-            if (train.segments && train.segments.length > 0) {
-                const d = new Date(train.segments[0].departureTime);
-                timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+        // Optimized: Use cached trains if available, otherwise fetch
+        let matchingTrains = [];
+
+        if (cachedTrains && cachedTrains.length > 0) {
+            matchingTrains = cachedTrains;
+        } else {
+            console.log("Fetching train list (First run only)...");
+            const seferUrl = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1";
+
+            const seferBody = {
+                searchRoutes: [{
+                    departureStationId: departureId,
+                    departureStationName: departure,
+                    arrivalStationId: arrivalId,
+                    arrivalStationName: arrival,
+                    departureDate: apiDate
+                }],
+                passengerTypeCounts: [{ id: 0, count: 1 }],
+                searchReservation: false,
+                blTrainTypes: ["TURISTIK_TREN"]
+            };
+
+            // Ensure booking classes are loaded
+            if (bookingClasses.length === 0) await fetchBookingClasses();
+
+            const responseData = await postRequest(seferUrl, seferBody, authToken, apiHeaders);
+
+            let allTrains = [];
+            if (responseData && responseData.trainLegs && responseData.trainLegs.length > 0) {
+                responseData.trainLegs.forEach(leg => {
+                    if (leg.trainAvailabilities) {
+                        leg.trainAvailabilities.forEach(availability => {
+                            if (availability && Array.isArray(availability.trains)) {
+                                allTrains.push(...availability.trains);
+                            }
+                        });
+                    }
+                });
+            } else if (Array.isArray(responseData)) {
+                allTrains = responseData;
             }
-            return matchesTimes.includes(timeStr);
-        });
+
+            if (allTrains.length === 0) {
+                console.log("Check seats: No trains found.");
+                return;
+            }
+
+            const matchesTimes = currentConfig.times || [currentConfig.time];
+            matchingTrains = allTrains.filter(train => {
+                let timeStr = "";
+                if (train.segments && train.segments.length > 0) {
+                    const d = new Date(train.segments[0].departureTime);
+                    timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+                }
+                return matchesTimes.includes(timeStr);
+            });
+
+            if (matchingTrains.length > 0) {
+                console.log(`Caching ${matchingTrains.length} matching trains for future checks.`);
+                cachedTrains = matchingTrains;
+            } else {
+                console.warn("No matching trains found for the selected time.");
+                return;
+            }
+        }
 
         for (const targetTrain of matchingTrains) {
             console.log(`Checking train: ${targetTrain.name} (${targetTrain.id})`);
 
-            // We only check detailed map if there is ANY indication of availability, or just check always?
-            // The previous 'maybeAvailable' check is good optimization but let's be safe and check map if configured.
-            // For now, let's assume we proceed to check map if the train matches time.
+
 
             try {
                 const seatMapUrl = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/seat-maps/load-by-train-id?environment=dev&userId=1";
@@ -194,7 +217,7 @@ async function checkSeats() {
 
                             if (purchasableSeats.length > 0) {
                                 const vagonInfo = wagon.wagonNo || (i + 1);
-                                console.log(`[${targetTrain.name} - ${vagonInfo}. Vagon] Pubchasable Seats:`, JSON.stringify(purchasableSeats));
+                                console.log(`[${targetTrain.name} - ${vagonInfo}. Vagon] Purchasable Seats:`, JSON.stringify(purchasableSeats));
                                 // Now filter by User Allowed Ticket Types (Classes)
                                 const allowedClasses = currentConfig.allowedClasses || {};
                                 console.log("Allowed Classes for Check:", JSON.stringify(allowedClasses));
@@ -245,13 +268,10 @@ async function checkSeats() {
 
                         stopMonitoring();
 
-                        // *** NO API SEAT SELECTION ***
-                        // Previously we tried to select seat via API here, but user requested to skip it.
-                        // We will just open the page and let the content script click the seat.
-                        const apiSelectionSuccess = false;
-                        console.log("Skipping API selection, proceeding to UI automation...");
+                        // Found specific seat - Stop monitoring and proceed to booking
+                        console.log("Proceeding to UI automation...");
 
-                        notifyAndAct(configToUse, targetTrain.id, foundVagon, foundSeat, targetTime, apiSelectionSuccess);
+                        notifyAndAct(configToUse, targetTrain.id, foundVagon, foundSeat, targetTime);
                         return;
                     }
                 }
@@ -262,6 +282,8 @@ async function checkSeats() {
 
     } catch (err) {
         console.error("Check loop error:", err);
+    } finally {
+        isChecking = false;
     }
 }
 
@@ -276,10 +298,8 @@ async function postRequest(url, body, token, savedHeaders = {}) {
     // Force specific headers to bypass origin checks
     headers["Origin"] = "https://ebilet.tcddtasimacilik.gov.tr";
     headers["Referer"] = "https://ebilet.tcddtasimacilik.gov.tr/";
-    headers["unit-id"] = "3895"; // CRITICAL: Missing in previous logs
+    headers["unit-id"] = "3895";
     headers["channelId"] = "3";
-    // headers["Sec-Fetch-Site"] = "same-site";
-    // headers["Sec-Fetch-Mode"] = "cors";
 
     console.log("Final Headers for Request:", JSON.stringify(headers));
 
@@ -529,7 +549,7 @@ async function automateBooking(config) {
         if (targetButton) {
             console.log("Found train button, clicking to expand...");
             targetButton.click();
-            await sleep(2000);
+            await sleep(500);
 
             // TCDD results page expands a section containing vagon types and a "Seçin" button
             const expandedAreaId = targetButton.getAttribute('data-target') || targetButton.id.replace('btn', '');
@@ -553,7 +573,7 @@ async function automateBooking(config) {
                         console.log(`Selecting vagon type: ${typeText}`);
                         vBtn.click();
                         vagonSelected = true;
-                        await sleep(800);
+                        await sleep(300);
                         break;
                     }
                 }
@@ -567,7 +587,7 @@ async function automateBooking(config) {
                 if (selectBtn) {
                     console.log("Clicking 'Seçin' button...");
                     selectBtn.click();
-                    await sleep(2000);
+                    await sleep(300);
                 }
             }
 
@@ -593,7 +613,7 @@ async function automateBooking(config) {
             // Manual fallback wait if the specific selector fails
             await sleep(5000);
         }
-        await sleep(3000); // Give extra time for layout to stabilize
+        await sleep(1500); // Give extra time for layout to stabilize
 
         // Select Vagon
         const vagonButtons = Array.from(document.querySelectorAll(selectors.vagonButton));
@@ -632,7 +652,7 @@ async function automateBooking(config) {
             }
         }
 
-        await sleep(2500);
+        await sleep(500);
 
         // Select Seat
         console.log(`Attempting to select seat: ${koltukNo}`);
@@ -682,7 +702,7 @@ async function automateBooking(config) {
             seatEl.click();
             seatEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 
-            await sleep(1000); // Wait for potential network request/UI update
+            await sleep(100); // Wait for potential network request/UI update
 
             if (isSeatSelected()) {
                 console.log(`Seat ${koltukNo} successfully selected.`);
@@ -706,11 +726,9 @@ async function automateBooking(config) {
         if (config.gender) {
             console.log("Handling gender selection for:", config.gender);
             // Wait for gender popover to appear
-            await sleep(500);
+            await sleep(50);
 
             const isWomen = config.gender === "Kadın" || config.gender === "W";
-            const targetKeyword = isWomen ? "women" : "man";
-
             try {
                 // Robust approach: Look for specific images anywhere in the document
                 let genderBtn = null;
@@ -733,7 +751,7 @@ async function automateBooking(config) {
                     console.log("Gender button found. Clicking...");
                     genderBtn.click();
                 } else {
-                    console.warn(`Gender button for ${keyword} not found after wait.`);
+                    console.warn(`Gender button (positional) not found after wait.`);
                 }
 
             } catch (err) {
