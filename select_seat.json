@@ -1,3 +1,0 @@
-Request:{"trainCarId":603638,"fromStationId":93,"toStationId":1325,"gender":"M","seatNumber":"11A","passengerTypeId":0,"totalPassengerCount":1,"fareFamilyId":0}
-Response:{"allocationId":"c6dbcdfe-295a-4275-9549-dd52481a03a4","selectedBookingClassId":1,"selectedFareFamilyId":1,"selectedPassengerTypeId":1,"lockFor":10}
-Endpoint:https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/inventory/select-seat?environment=dev&userId=1

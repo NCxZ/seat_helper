@@ -1,0 +1,21 @@
+# System files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs and Data Dumps (contain sensitive network data)
+*.txt
+*.har
+*.log
+sefer_listeleme_ekranı.txt
+vagon_ve_koltuk_secimi.txt
+koltuk_secimi_ve_bilgi_doldurma.txt
+
+# Temp/Backup files
+*.bak
+*.tmp
+
+# User specific JSON dumps and unused static data
+select_seat.json
+stations.json
+stations_array.json
