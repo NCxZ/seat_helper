@@ -257,7 +257,12 @@ async function checkSeats() {
                     }
 
                     if (foundVagon && foundSeat && foundTrainCarId) {
+                        const successMsg = `KOLTUK BULUNDU! ${targetTrain.name} - Vagon: ${foundVagon}, Koltuk: ${foundSeat}`;
                         console.log(`STOPPING: Proceeding with Vagon ${foundVagon}, Seat ${foundSeat}`);
+
+                        // Send log to popup
+                        chrome.runtime.sendMessage({ action: "LOG", message: successMsg }).catch(() => { });
+
                         const configToUse = { ...currentConfig };
 
                         let targetTime = "Any";
@@ -430,7 +435,7 @@ async function automateBooking(config) {
         input.dispatchEvent(new Event('change', { bubbles: true }));
 
         // Optimize wait: check for dropdown items or timeout fast
-        try { await waitFor('.dropdown-item.station', 300); } catch (e) { }
+        try { await waitFor('.dropdown-item.station', 100); } catch (e) { }
         await sleep(100);
 
         // User suggested: Press ArrowDown then Enter to select from autocomplete
@@ -438,7 +443,7 @@ async function automateBooking(config) {
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', keyCode: 40, bubbles: true }));
         await sleep(100);
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-        await sleep(200);
+        await sleep(50);
 
         // TCDD site uses .dropdown-item.station buttons - Backup click if Enter didn't select it
         const items = Array.from(document.querySelectorAll('.dropdown-item.station')).filter(el => {
@@ -480,7 +485,7 @@ async function automateBooking(config) {
 
                 dateEl.focus();
                 dateEl.click(); // Open Datepicker
-                await sleep(300);
+                await sleep(100);
 
                 // Find the day in the calendar grid (handles multiple months if visible)
                 const calendarTables = document.querySelectorAll('.calendar-table');
@@ -512,14 +517,14 @@ async function automateBooking(config) {
                     dateEl.dispatchEvent(new Event('change', { bubbles: true }));
                 }
 
-                await sleep(300);
+                await sleep(100);
                 document.body.click(); // Ensure overlay is closed
             }
 
             const searchBtn = document.querySelector(selectors.searchBtn);
             if (searchBtn) {
                 console.log("Clicking Search Button...");
-                await sleep(200);
+
                 searchBtn.click();
                 // Wait for the results page to start loading and old results to clear
                 await sleep(500);
@@ -549,7 +554,7 @@ async function automateBooking(config) {
         if (targetButton) {
             console.log("Found train button, clicking to expand...");
             targetButton.click();
-            await sleep(500);
+            await sleep(50);
 
             // TCDD results page expands a section containing vagon types and a "Seçin" button
             const expandedAreaId = targetButton.getAttribute('data-target') || targetButton.id.replace('btn', '');
@@ -573,7 +578,7 @@ async function automateBooking(config) {
                         console.log(`Selecting vagon type: ${typeText}`);
                         vBtn.click();
                         vagonSelected = true;
-                        await sleep(300);
+                        await sleep(50);
                         break;
                     }
                 }
@@ -782,6 +787,7 @@ async function automateBooking(config) {
         overlay.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
         overlay.innerText = "BİLET SEÇİLDİ! Lütfen Ödeme Yapın.";
         document.body.appendChild(overlay);
+        chrome.runtime.sendMessage({ action: "LOG", message: "Koltuk (" + koltukNo + ") başarıyla seçildi. Ödeme bekleniyor." }).catch(() => { });
 
         // Remove after 5 seconds
         setTimeout(() => {

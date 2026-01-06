@@ -55,6 +55,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             updateStatus("Token Yakalandı!", "green");
         }
     });
+    // Listen for log messages
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request.action === "LOG") {
+            log(request.message);
+        }
+    });
 });
 
 async function loadStations() {
@@ -193,116 +199,121 @@ async function fetchSeferTimes() {
     allFetchedTrains = []; // Reset
 
     // Delegate API call to background to avoid CORS/Fetch issues in Popup
-    chrome.runtime.sendMessage({
-        action: "FETCH_SEFERLER",
-        url: "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1",
-        body: body,
-        token: authToken,
-        apiHeaders: apiHeaders // Pass headers if available
-    }, (response) => {
-        if (chrome.runtime.lastError) {
-            log("Bağlantı Hatası: " + chrome.runtime.lastError.message);
-            return;
-        }
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+            action: "FETCH_SEFERLER",
+            url: "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1",
+            body: body,
+            token: authToken,
+            apiHeaders: apiHeaders // Pass headers if available
+        }, (response) => {
+            if (chrome.runtime.lastError) {
+                log("Bağlantı Hatası: " + chrome.runtime.lastError.message);
+                resolve();
+                return;
+            }
 
-        if (response.error) {
-            log("API Hatası: " + response.error);
-            return;
-        }
+            if (response.error) {
+                log("API Hatası: " + response.error);
+                resolve();
+                return;
+            }
 
-        const data = response.data;
-        const timeContainer = document.getElementById("time-checkbox-container");
-        timeContainer.innerHTML = "";
+            const data = response.data;
+            const timeContainer = document.getElementById("time-checkbox-container");
+            timeContainer.innerHTML = "";
 
-        if (data && data.trainLegs && data.trainLegs.length > 0) {
-            data.trainLegs.forEach(leg => {
-                if (leg.trainAvailabilities) {
-                    leg.trainAvailabilities.forEach(item => {
-                        if (item.trains && item.trains.length > 0) {
-                            item.trains.forEach(train => {
-                                if (train.segments && train.segments.length > 0) {
-                                    const trSegment = train.segments[0];
-                                    const timestamp = trSegment.departureTime;
-                                    const d = new Date(timestamp);
-                                    const timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
+            if (data && data.trainLegs && data.trainLegs.length > 0) {
+                data.trainLegs.forEach(leg => {
+                    if (leg.trainAvailabilities) {
+                        leg.trainAvailabilities.forEach(item => {
+                            if (item.trains && item.trains.length > 0) {
+                                item.trains.forEach(train => {
+                                    if (train.segments && train.segments.length > 0) {
+                                        const trSegment = train.segments[0];
+                                        const timestamp = trSegment.departureTime;
+                                        const d = new Date(timestamp);
+                                        const timeStr = d.toLocaleTimeString("tr-TR", { hour: '2-digit', minute: '2-digit' });
 
-                                    // Collect all possible cabin classes from this train object
-                                    const classesFound = [];
+                                        // Collect all possible cabin classes from this train object
+                                        const classesFound = [];
 
-                                    // Source 1: cabinClassAvailabilities
-                                    if (train.cabinClassAvailabilities) {
-                                        train.cabinClassAvailabilities.forEach(cc => {
-                                            if (cc.cabinClass && cc.cabinClass.name) classesFound.push(cc);
-                                        });
-                                    }
+                                        // Source 1: cabinClassAvailabilities
+                                        if (train.cabinClassAvailabilities) {
+                                            train.cabinClassAvailabilities.forEach(cc => {
+                                                if (cc.cabinClass && cc.cabinClass.name) classesFound.push(cc);
+                                            });
+                                        }
 
-                                    // Source 2: availableFareInfo (more comprehensive in some API versions)
-                                    if (train.availableFareInfo) {
-                                        train.availableFareInfo.forEach(fare => {
-                                            if (fare.cabinClasses) {
-                                                fare.cabinClasses.forEach(cc => {
-                                                    if (cc.cabinClass && cc.cabinClass.name) {
-                                                        // Prevent duplicates within the same train object
-                                                        if (!classesFound.find(existing => existing.cabinClass.name === cc.cabinClass.name)) {
-                                                            classesFound.push(cc);
+                                        // Source 2: availableFareInfo (more comprehensive in some API versions)
+                                        if (train.availableFareInfo) {
+                                            train.availableFareInfo.forEach(fare => {
+                                                if (fare.cabinClasses) {
+                                                    fare.cabinClasses.forEach(cc => {
+                                                        if (cc.cabinClass && cc.cabinClass.name) {
+                                                            // Prevent duplicates within the same train object
+                                                            if (!classesFound.find(existing => existing.cabinClass.name === cc.cabinClass.name)) {
+                                                                classesFound.push(cc);
+                                                            }
                                                         }
-                                                    }
-                                                });
-                                            }
-                                        });
+                                                    });
+                                                }
+                                            });
+                                        }
+
+                                        // Check if we already have a train at this time
+                                        let existingTrain = allFetchedTrains.find(t => t.timeStr === timeStr);
+                                        if (existingTrain) {
+                                            // Merge new classes into existing train entry
+                                            classesFound.forEach(newCC => {
+                                                if (!existingTrain.cabinClassAvailabilities.find(ecc => ecc.cabinClass.name === newCC.cabinClass.name)) {
+                                                    existingTrain.cabinClassAvailabilities.push(newCC);
+                                                }
+                                            });
+                                        } else {
+                                            // Add as new entry
+                                            allFetchedTrains.push({
+                                                ...train,
+                                                cabinClassAvailabilities: classesFound,
+                                                timeStr: timeStr
+                                            });
+                                        }
                                     }
+                                });
+                            }
+                        });
+                    }
+                });
+            }
 
-                                    // Check if we already have a train at this time
-                                    let existingTrain = allFetchedTrains.find(t => t.timeStr === timeStr);
-                                    if (existingTrain) {
-                                        // Merge new classes into existing train entry
-                                        classesFound.forEach(newCC => {
-                                            if (!existingTrain.cabinClassAvailabilities.find(ecc => ecc.cabinClass.name === newCC.cabinClass.name)) {
-                                                existingTrain.cabinClassAvailabilities.push(newCC);
-                                            }
-                                        });
-                                    } else {
-                                        // Add as new entry
-                                        allFetchedTrains.push({
-                                            ...train,
-                                            cabinClassAvailabilities: classesFound,
-                                            timeStr: timeStr
-                                        });
-                                    }
-                                }
-                            });
-                        }
-                    });
-                }
-            });
-        }
+            if (allFetchedTrains.length > 0) {
+                // Sort by time
+                allFetchedTrains.sort((a, b) => {
+                    const depA = a.segments[0].departureTime;
+                    const depB = b.segments[0].departureTime;
+                    return depA - depB;
+                });
 
-        if (allFetchedTrains.length > 0) {
-            // Sort by time
-            allFetchedTrains.sort((a, b) => {
-                const depA = a.segments[0].departureTime;
-                const depB = b.segments[0].departureTime;
-                return depA - depB;
-            });
-
-            allFetchedTrains.forEach(train => {
-                const label = document.createElement("label");
-                label.className = "checkbox-label";
-                const cb = document.createElement("input");
-                cb.type = "checkbox";
-                cb.value = train.timeStr;
-                cb.className = "time-checkbox";
-                cb.addEventListener("change", updateCabinClasses);
-                label.appendChild(cb);
-                label.appendChild(document.createTextNode(` ${train.timeStr}`));
-                timeContainer.appendChild(label);
-            });
-            log(`${allFetchedTrains.length} sefer bulundu.`);
-        } else {
-            log("Bu tarih/güzergah için sefer bulunamadı.");
-            timeContainer.innerHTML = '<span style="font-size:11px; color:#999;">Sefer Yok</span>';
-        }
-        updateCabinClasses(); // Clear or update classes
+                allFetchedTrains.forEach(train => {
+                    const label = document.createElement("label");
+                    label.className = "checkbox-label";
+                    const cb = document.createElement("input");
+                    cb.type = "checkbox";
+                    cb.value = train.timeStr;
+                    cb.className = "time-checkbox";
+                    cb.addEventListener("change", updateCabinClasses);
+                    label.appendChild(cb);
+                    label.appendChild(document.createTextNode(` ${train.timeStr}`));
+                    timeContainer.appendChild(label);
+                });
+                log(`${allFetchedTrains.length} sefer bulundu.`);
+            } else {
+                log("Bu tarih/güzergah için sefer bulunamadı.");
+                timeContainer.innerHTML = '<span style="font-size:11px; color:#999;">Sefer Yok</span>';
+            }
+            updateCabinClasses(); // Clear or update classes
+            resolve();
+        });
     });
 }
 
@@ -554,7 +565,14 @@ function restoreInputs() {
                     const classesToRestore = d.savedClasses || {};
                     Object.keys(classesToRestore).forEach(className => {
                         const cb = document.querySelector(`#class-checkbox-container input[value='${className}']`);
-                        if (cb) cb.checked = classesToRestore[className];
+                        if (cb) {
+                            const val = classesToRestore[className];
+                            if (val === true || (typeof val === 'object' && val.checked)) {
+                                cb.checked = true;
+                            } else {
+                                cb.checked = false;
+                            }
+                        }
                     });
                 });
             }
